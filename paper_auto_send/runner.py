@@ -7,9 +7,8 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from urllib.parse import urlsplit
 
-from .dates import is_recent, is_recent_title_year, title_year
+from .dates import is_recent_title_year, title_year
 from .history import DEFAULT_HISTORY_PATH, load_sent, save_sent
 from .mailer import MailDeliveryError, send_email
 from .security import RESOURCE_DOMAINS, safe_resource_url
@@ -29,19 +28,13 @@ def newly_found(result: ScanResult, sent: set[str], today: date | None = None) -
             continue
         if safe_link in seen:
             continue
-        try:
-            published = date.fromisoformat(paper["published"]) if paper.get("published") else None
-        except ValueError:
-            published = None
         check_date = today or datetime.now(SHANGHAI).date()
         title_based = (
-            not paper.get("published")
-            and paper.get("date_basis") == "title_year"
-            and urlsplit(safe_link).hostname == "appsj.szxuexiao.com"
+            paper.get("date_basis") == "title_year"
             and paper.get("title_year") == str(title_year(paper.get("title", "")))
             and is_recent_title_year(paper.get("title", ""), check_date)
         )
-        if not is_recent(published, check_date) and not title_based:
+        if not title_based:
             continue
         item = dict(paper)
         item["link"] = safe_link

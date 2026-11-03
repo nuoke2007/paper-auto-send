@@ -6,10 +6,9 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date
 from typing import Iterable
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
-from zoneinfo import ZoneInfo
 
 import truststore
 
@@ -18,7 +17,7 @@ truststore.inject_into_ssl()
 import requests
 from bs4 import BeautifulSoup, Tag
 
-from .dates import is_recent, is_recent_title_year, parse_publication_date, title_year
+from .dates import is_recent_title_year, title_year
 from .security import safe_resource_url
 
 LOGGER = logging.getLogger(__name__)
@@ -32,7 +31,6 @@ SEARCH_FIELD_HINTS = ("q", "query", "keyword", "key", "search", "word", "title",
 PAID_MARKERS = ("付费", "收费", "学币", "积分下载", "精品", "会员", "登录后下载", "需登录")
 NOT_FULLY_FREE_MARKERS = ("免费预览", "部分免费", "部分内容免费")
 FREE_MARKERS = ("免费资源", "免费下载", "免费试卷")
-DATE_FIELDS = ("date", "time", "publish", "create")
 ARTICLE_CLASSES = re.compile(r"(list|item|result|resource|thread|card|entry|post|paper|news)", re.I)
 MAX_BROWSER_PAGES_PER_QUERY = 3
 EMPTY_RESULT_MARKERS = ("暂无相关", "暂无数据", "暂无搜索结果", "没有相关", "没有找到匹配结果", "没有搜索结果", "未找到相关", "未搜索到", "未查询到", "无搜索结果", "共0条")
@@ -47,7 +45,6 @@ class Source:
     only_free: bool = False
     exclude_terms: tuple[str, ...] = ()
     browser_search_url: str | None = None
-    allow_title_year: bool = False
 
 
 @dataclass
@@ -89,7 +86,6 @@ def source_definitions(keywords: tuple[str, ...]) -> tuple[Source, ...]:
             ("appsj.szxuexiao.com",),
             tuple(primary_entries),
             (keywords[0], keywords[1]),
-            allow_title_year=True,
         ),
         Source(
             "牛津中小学英语网",
@@ -312,28 +308,6 @@ def _has_explicit_free_label(container: Tag) -> bool:
     return False
 
 
-def _date_from_container(container: Tag, anchor: Tag) -> date | None:
-    for node in (container, *container.find_all(True)):
-        if node.name == "a":
-            continue
-        for attribute in ("datetime", "data-date", "data-pubdate"):
-            published = parse_publication_date(str(node.get(attribute, "")))
-            if published is not None:
-                return published
-        identity = " ".join(node.get("class", [])) + " " + str(node.get("id", ""))
-        if any(field in identity.lower() for field in ("reply", "update", "modified")):
-            continue
-        if node.find("a") is None and (
-            node.name == "time"
-            or any(field in identity.lower() for field in DATE_FIELDS)
-            or re.fullmatch(r"\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}(?:日)?(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?", _text(node))
-        ):
-            published = parse_publication_date(str(node.get("title", ""))) or parse_publication_date(_text(node))
-            if published is not None:
-                return published
-    return None
-
-
 def _resource_metadata(container: Tag) -> dict:
     for node in container.select("[hmtproperty]"):
         try:
@@ -343,16 +317,6 @@ def _resource_metadata(container: Tag) -> dict:
         if isinstance(metadata, dict) and isinstance(metadata.get("title"), str):
             return metadata
     return {}
-
-
-def _metadata_publication_date(metadata: dict) -> date | None:
-    created = metadata.get("created_at")
-    if not isinstance(created, (str, int)) or not re.fullmatch(r"\d{10}", str(created)):
-        return None
-    try:
-        return datetime.fromtimestamp(int(created), ZoneInfo("Asia/Shanghai")).date()
-    except (ValueError, OverflowError, OSError):
-        return None
 
 
 def _contains_keyword(text: str, keyword: str) -> bool:
@@ -415,26 +379,15 @@ def extract_papers(
             word in title for word in ("试卷", "测试", "练习", "检测", "默写", "听力", "期末", "期中", "测评", "考试", "作业", "卷")
         ):
             continue
-        published = _metadata_publication_date(metadata) or _date_from_container(container, anchor)
-        item = {
-                "title": title,
-                "link": link,
-                "source": source.name,
-            }
-        if published is not None:
-            if not is_recent(published, today):
-                continue
-            item["published"] = published.isoformat()
-        elif (
-            source.allow_title_year
-            and urlsplit(link).hostname == "appsj.szxuexiao.com"
-            and re.fullmatch(r"/html/\d+\.html", urlsplit(link).path)
-            and is_recent_title_year(title, today)
-        ):
-            item["date_basis"] = "title_year"
-            item["title_year"] = str(title_year(title))
-        else:
+        if not is_recent_title_year(title, today):
             continue
+        item = {
+            "title": title,
+            "link": link,
+            "source": source.name,
+            "date_basis": "title_year",
+            "title_year": str(title_year(title)),
+        }
         results.append(item)
     return results
 
@@ -527,7 +480,7 @@ def _scan_source(source: Source, today: date, fetcher: PoliteFetcher) -> tuple[l
 
     successful = listing_evidence and not errors
     if not successful:
-        errors.append("no usable public search form or dated target listing was discoverable")
+        errors.append("no usable public search form or target listing was discoverable")
     if errors:
         LOGGER.warning("%s: %d diagnostic(s); first: %s", source.name, len(errors), errors[0])
     LOGGER.info("%s: %d candidate(s) discovered", source.name, len(papers))
