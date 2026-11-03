@@ -44,8 +44,31 @@ def safe_resource_url(value: str, allowed_domains: tuple[str, ...]) -> str | Non
         return None
 
 
+PAPER_CATEGORIES = (
+    "期中考试卷", "期末考试卷", "单元检测", "随堂练习与阶段测评",
+    "专项训练", "综合复习", "其他试卷",
+)
+
+
+def paper_category(title: str) -> str:
+    compact = re.sub(r"\s+", "", title)
+    if any(word in compact for word in ("专项", "专题", "题型", "易错", "知识点", "考点")):
+        return "专项训练"
+    if any(word in compact for word in ("复习", "汇总", "归纳")):
+        return "综合复习"
+    if "期中" in compact:
+        return "期中考试卷"
+    if "期末" in compact:
+        return "期末考试卷"
+    if re.search(r"单元|Unit\s*\d|Module\s*\d", compact, re.IGNORECASE):
+        return "单元检测"
+    if any(word in compact for word in ("随堂", "课堂", "课时", "同步", "每日", "周测", "周练", "月考", "阶段", "作业", "练习")):
+        return "随堂练习与阶段测评"
+    return "其他试卷"
+
+
 def build_email_html(papers: list[dict[str, str]]) -> str:
-    rows = []
+    groups: dict[str, list[str]] = {category: [] for category in PAPER_CATEGORIES}
     for paper in papers:
         title = html.escape(paper["title"], quote=True)
         safe_link = safe_resource_url(paper["link"], RESOURCE_DOMAINS)
@@ -58,10 +81,36 @@ def build_email_html(papers: list[dict[str, str]]) -> str:
             timing = f"发布日期：{html.escape(paper.get('published', '未提供'), quote=True)}"
         if paper.get("region_basis"):
             timing += f"；地区依据：{html.escape(paper['region_basis'], quote=True)}"
-        rows.append(f'<li>{title} — {timing} — <a href="{link}">预览&下载</a></li>')
+        source = html.escape(paper.get("source") or urlsplit(safe_link).hostname or "", quote=True)
+        groups[paper_category(paper["title"])].append(
+            '<li style="margin:0 0 16px;padding:0 0 12px;border-bottom:1px solid #e5e7eb;">'
+            f'<div style="font-size:15px;line-height:1.7;font-weight:600;">{title}</div>'
+            f'<div style="font-size:12px;line-height:1.8;color:#64748b;">来源：{source}<br>{timing}</div>'
+            f'<a href="{link}" style="color:#1d4ed8;font-size:14px;line-height:2;">查看原站详情与下载入口 →</a></li>'
+        )
+    summary = " · ".join(f"{category} {len(rows)}份" for category, rows in groups.items() if rows)
+    sections = "".join(
+        '<tr><td style="padding:8px 24px;">'
+        f'<h2 style="font-size:18px;color:#0f172a;border-left:4px solid #2563eb;padding-left:10px;">'
+        f'{category} <span style="font-size:13px;font-weight:normal;color:#64748b;">{len(rows)}份</span></h2>'
+        f'<ol style="padding-left:22px;margin-top:16px;">{"".join(rows)}</ol></td></tr>'
+        for category, rows in groups.items() if rows
+    )
     return (
-        "<!doctype html><html><body>"
-        "<h3>今日新增试卷（苏州园区适配 · 近3年内）</h3>"
-        "<p>来源：小学试卷网 / 牛津中小学英语网 / 二一教育（仅明确免费资源） / xxsj.org</p>"
-        f"<ul>{''.join(rows)}</ul></body></html>"
+        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1"></head>'
+        '<body style="margin:0;padding:16px 8px;background:#f1f5f9;color:#1e293b;font-family:Arial,sans-serif;">'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:760px;margin:0 auto;background:#ffffff;">'
+        '<tr><td style="padding:24px;background:#1e3a8a;color:#ffffff;">'
+        '<h1 style="font-size:22px;margin:0 0 10px;">每日新增试卷</h1>'
+        f'<p style="margin:0;font-size:14px;line-height:1.8;">本次新增 {len(papers)} 份 · 当前年级学期 · 近3年标题年份</p>'
+        '</td></tr><tr><td style="padding:18px 24px;background:#eff6ff;">'
+        f'<p style="margin:0;font-size:13px;line-height:1.8;">{summary or "暂无新增试卷"}</p>'
+        '</td></tr>'
+        f'{sections}'
+        '<tr><td style="padding:20px 24px;font-size:12px;line-height:1.8;color:#64748b;background:#f8fafc;">'
+        '分类根据资源标题自动判断，未核验试卷正文；专项训练、复习资料优先归入对应类别，'
+        '不因标题含“期末”等字样就当作整套考试卷。<br>'
+        '标题年份不是网页发布日期；点击链接前往原站，附件是否可下载以原站为准。'
+        '</td></tr></table></body></html>'
     )
