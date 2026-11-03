@@ -7,8 +7,9 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from urllib.parse import urlsplit
 
-from .dates import is_recent
+from .dates import is_recent, is_recent_title_year, title_year
 from .history import DEFAULT_HISTORY_PATH, load_sent, save_sent
 from .mailer import MailDeliveryError, send_email
 from .security import RESOURCE_DOMAINS, safe_resource_url
@@ -32,7 +33,15 @@ def newly_found(result: ScanResult, sent: set[str], today: date | None = None) -
             published = date.fromisoformat(paper["published"]) if paper.get("published") else None
         except ValueError:
             published = None
-        if not is_recent(published, today or datetime.now(SHANGHAI).date()):
+        check_date = today or datetime.now(SHANGHAI).date()
+        title_based = (
+            not paper.get("published")
+            and paper.get("date_basis") == "title_year"
+            and urlsplit(safe_link).hostname == "appsj.szxuexiao.com"
+            and paper.get("title_year") == str(title_year(paper.get("title", "")))
+            and is_recent_title_year(paper.get("title", ""), check_date)
+        )
+        if not is_recent(published, check_date) and not title_based:
             continue
         item = dict(paper)
         item["link"] = safe_link
@@ -41,24 +50,27 @@ def newly_found(result: ScanResult, sent: set[str], today: date | None = None) -
     return fresh
 
 
-def run(dry_run: bool = False, report_path: Path | None = None) -> int:
+def run(dry_run: bool = False, report_path: Path | None = None, source_filter: str = "all") -> int:
     today = datetime.now(SHANGHAI).date()
     sent = load_sent(DEFAULT_HISTORY_PATH)
-    result = crawl_all(today)
+    result = crawl_all(today) if source_filter == "all" else crawl_all(today, source_filter)
     fresh = newly_found(result, sent, today)
     if result.failures:
         LOGGER.error(
-            "Partial crawl failure: %d of 3 source(s) could not be verified: %s",
+            "Partial crawl failure: %d of %d source(s) could not be verified: %s",
             len(result.failures),
+            result.expected_sources,
             ", ".join(result.failures),
         )
-    elif result.successful_sources != 3:
+    elif result.successful_sources != result.expected_sources:
         LOGGER.error("Crawl did not verify all configured sources")
-    failed = bool(result.failures) or result.successful_sources != 3
+    failed = bool(result.failures) or result.successful_sources != result.expected_sources
     report = {
         "date": today.isoformat(),
         "dry_run": dry_run,
         "successful_sources": result.successful_sources,
+        "expected_sources": result.expected_sources,
+        "source_filter": source_filter,
         "failed_sources": result.failures,
         "eligible_resources": len(result.papers),
         "new_resources": len(fresh),
@@ -91,6 +103,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Daily public school-paper discovery and email delivery")
     parser.add_argument("--dry-run", action="store_true", help="Scan all sources without SMTP or history writes")
     parser.add_argument("--report", type=Path, help="Write a counts-only JSON diagnostic report")
+    parser.add_argument("--source", choices=("all", "primary"), default="all",
+                        help="Scan all sources or only the primary paper site")
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO,
@@ -98,7 +112,7 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     try:
-        exit_code = run(dry_run=args.dry_run, report_path=args.report)
+        exit_code = run(dry_run=args.dry_run, report_path=args.report, source_filter=args.source)
     except (RuntimeError, MailDeliveryError) as exc:
         LOGGER.error("%s", exc)
         exit_code = 1

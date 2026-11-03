@@ -33,3 +33,22 @@ def is_recent(publication_date: date | None, today: date) -> bool:
         publication_date is not None
         and three_year_cutoff(today) <= publication_date <= today
     )
+
+
+def title_year(title: str) -> int | None:
+    years = re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", title)
+    if len(years) == 1:
+        return int(years[0])
+    if len(years) == 2:
+        start, end = map(int, years)
+        if end == start + 1 and re.search(
+            rf"{start}\s*[-—–~～至/]\s*{end}(?:\s*学年)?", title
+        ):
+            return start
+    return None
+
+
+def is_recent_title_year(title: str, today: date) -> bool:
+    year = title_year(title)
+    # The earliest possible date must fall inside the window; do not invent a publication date.
+    return year is not None and is_recent(date(year, 1, 1), today)

@@ -18,7 +18,7 @@ truststore.inject_into_ssl()
 import requests
 from bs4 import BeautifulSoup, Tag
 
-from .dates import is_recent, parse_publication_date
+from .dates import is_recent, is_recent_title_year, parse_publication_date, title_year
 from .security import safe_resource_url
 
 LOGGER = logging.getLogger(__name__)
@@ -47,6 +47,7 @@ class Source:
     only_free: bool = False
     exclude_terms: tuple[str, ...] = ()
     browser_search_url: str | None = None
+    allow_title_year: bool = False
 
 
 @dataclass
@@ -55,6 +56,7 @@ class ScanResult:
     failures: list[str]
     successful_sources: int
     source_counts: dict[str, int] = field(default_factory=dict)
+    expected_sources: int = 3
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,7 @@ def source_definitions(keywords: tuple[str, ...]) -> tuple[Source, ...]:
             ("appsj.szxuexiao.com",),
             tuple(primary_entries),
             (keywords[0], keywords[1]),
+            allow_title_year=True,
         ),
         Source(
             "牛津中小学英语网",
@@ -413,16 +416,26 @@ def extract_papers(
         ):
             continue
         published = _metadata_publication_date(metadata) or _date_from_container(container, anchor)
-        if not is_recent(published, today):
-            continue
-        results.append(
-            {
+        item = {
                 "title": title,
                 "link": link,
-                "published": published.isoformat(),
                 "source": source.name,
             }
-        )
+        if published is not None:
+            if not is_recent(published, today):
+                continue
+            item["published"] = published.isoformat()
+        elif (
+            source.allow_title_year
+            and urlsplit(link).hostname == "appsj.szxuexiao.com"
+            and re.fullmatch(r"/html/\d+\.html", urlsplit(link).path)
+            and is_recent_title_year(title, today)
+        ):
+            item["date_basis"] = "title_year"
+            item["title_year"] = str(title_year(title))
+        else:
+            continue
+        results.append(item)
     return results
 
 
@@ -778,7 +791,7 @@ def _scan_browser_source(source: Source, today: date) -> tuple[list[dict[str, st
     return papers, successful
 
 
-def crawl_all(today: date) -> ScanResult:
+def crawl_all(today: date, source_filter: str = "all") -> ScanResult:
     fetcher = PoliteFetcher()
     papers: list[dict[str, str]] = []
     failures: list[str] = []
@@ -786,7 +799,12 @@ def crawl_all(today: date) -> ScanResult:
     source_counts: dict[str, int] = {}
     from .academic import keywords_for_date
 
-    for source in source_definitions(keywords_for_date(today)):
+    if source_filter not in ("all", "primary"):
+        raise ValueError("source_filter must be all or primary")
+    sources = source_definitions(keywords_for_date(today))
+    if source_filter == "primary":
+        sources = sources[:1]
+    for source in sources:
         if source.browser_search_url:
             source_papers, successful = _scan_browser_source(source, today)
         else:
@@ -800,4 +818,4 @@ def crawl_all(today: date) -> ScanResult:
     unique: dict[str, dict[str, str]] = {}
     for paper in papers:
         unique.setdefault(paper["link"], paper)
-    return ScanResult(list(unique.values()), failures, successful_sources, source_counts)
+    return ScanResult(list(unique.values()), failures, successful_sources, source_counts, len(sources))

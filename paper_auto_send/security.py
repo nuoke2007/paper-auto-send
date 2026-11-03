@@ -52,7 +52,11 @@ def build_email_html(papers: list[dict[str, str]]) -> str:
         if safe_link is None:
             raise ValueError("email resource link is not an allowed HTTPS URL")
         link = html.escape(safe_link, quote=True)
-        rows.append(f'<li>{title} — <a href="{link}">预览&下载</a></li>')
+        if paper.get("date_basis") == "title_year":
+            timing = f"标题年份：{html.escape(paper['title_year'], quote=True)}（非发布日期；跨年学年取起始年）"
+        else:
+            timing = f"发布日期：{html.escape(paper.get('published', '未提供'), quote=True)}"
+        rows.append(f'<li>{title} — {timing} — <a href="{link}">预览&下载</a></li>')
     return (
         "<!doctype html><html><body>"
         "<h3>今日新增试卷（苏州园区适配 · 近3年内）</h3>"

@@ -10,6 +10,14 @@ on:
         required: true
         type: boolean
         default: true
+      source:
+        description: "Sources to scan (primary skips Oxford and 21cnjy)"
+        required: true
+        type: choice
+        options:
+          - all
+          - primary
+        default: all
 
 concurrency:
   group: paper-auto-send-history
@@ -45,12 +53,13 @@ jobs:
           EMAIL_SMTP_PWD: ${{ secrets.EMAIL_SMTP_PWD }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
           DELIVERY_ENABLED: ${{ vars.DELIVERY_ENABLED || 'false' }}
+          SOURCE_FILTER: ${{ inputs.source || 'all' }}
         shell: bash
         run: |
           set -euo pipefail
           if [[ "$DRY_RUN" == "true" || "$DELIVERY_ENABLED" != "true" ]]; then
             echo "::notice::Scan-only mode: no email or history changes."
-            python main.py --dry-run --report run-summary.json
+            python main.py --dry-run --source "$SOURCE_FILTER" --report run-summary.json
           else
             for name in EMAIL_FROM EMAIL_TO EMAIL_SMTP_PWD; do
               if [[ -z "${!name}" ]]; then
@@ -58,7 +67,7 @@ jobs:
                 exit 1
               fi
             done
-            python main.py --report run-summary.json
+            python main.py --source "$SOURCE_FILTER" --report run-summary.json
           fi
       - name: Persist sent history
         if: ${{ always() && !cancelled() }}

@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from paper_auto_send.academic import grade_for_date, keywords_for_date
-from paper_auto_send.dates import is_recent, parse_publication_date, three_year_cutoff
+from paper_auto_send.dates import is_recent, is_recent_title_year, parse_publication_date, three_year_cutoff, title_year
 from paper_auto_send.history import load_sent, save_sent
 from paper_auto_send.mailer import MailDeliveryError, send_email
 from paper_auto_send.runner import newly_found, run
@@ -46,6 +46,27 @@ class AcademicCalendarTests(unittest.TestCase):
 
 
 class DateFilterTests(unittest.TestCase):
+    def test_title_year_is_conservative_and_rejects_ambiguity(self) -> None:
+        today = date(2026, 11, 3)
+        for text, expected in (
+            ("苏教版2025一年级数学", 2025),
+            ("2025-2026学年试卷", 2025),
+            ("2025—2026 学年试卷", 2025),
+            ("2025至2026学年", 2025),
+            ("试卷无年份", None),
+            ("2024-2026学年", None),
+            ("2024和2025试卷", None),
+            ("2024-2025及2026", None),
+            ("编号12025001", None),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(title_year(text), expected)
+        self.assertFalse(is_recent_title_year("2023-2024学年", today))
+        self.assertTrue(is_recent_title_year("2024-2025学年", today))
+        self.assertTrue(is_recent_title_year("2026-2027学年", today))
+        self.assertFalse(is_recent_title_year("2027年试卷", today))
+        self.assertTrue(is_recent_title_year("2023年试卷", date(2026, 1, 1)))
+
     def test_cutoff_handles_leap_day_and_includes_exact_boundary(self) -> None:
         today = date(2024, 2, 29)
         self.assertEqual(three_year_cutoff(today), date(2021, 2, 28))
@@ -62,6 +83,36 @@ class DateFilterTests(unittest.TestCase):
 
 
 class UrlAndHtmlSafetyTests(unittest.TestCase):
+    def test_primary_title_year_fallback_and_publication_precedence(self) -> None:
+        source = source_definitions(keywords_for_date(date(2026, 11, 3)))[0]
+        def page(title, extra=""):
+            return f'<li><a href="/html/6901.html">{title}</a>{extra}</li>'
+        title = "苏教版2025-2026一年级数学期末测试卷"
+        papers = extract_papers(page(title), source.entry_urls[0], source, source.keywords, date(2026, 11, 3))
+        self.assertEqual(len(papers), 1)
+        self.assertNotIn("published", papers[0])
+        self.assertEqual(papers[0]["date_basis"], "title_year")
+        self.assertEqual(papers[0]["title_year"], "2025")
+        self.assertEqual(len(newly_found(ScanResult(papers, [], 1), set(), date(2026, 11, 3))), 1)
+        body = build_email_html(papers)
+        self.assertIn("非发布日期", body)
+        self.assertIn("标题年份：2025", body)
+        for published in ("2020-01-01", "2027-01-01"):
+            self.assertEqual(extract_papers(page(title, f'<time>{published}</time>'),
+                source.entry_urls[0], source, source.keywords, date(2026, 11, 3)), [])
+        dated = extract_papers(page(title, '<time>2026-01-01</time>'),
+            source.entry_urls[0], source, source.keywords, date(2026, 11, 3))
+        self.assertEqual(dated[0]["published"], "2026-01-01")
+        self.assertNotIn("date_basis", dated[0])
+        for invalid in ("苏教版一年级数学试卷", "苏教版2023-2024一年级数学试卷"):
+            self.assertEqual(extract_papers(page(invalid), source.entry_urls[0], source,
+                source.keywords, date(2026, 11, 3)), [])
+        strict = Source("牛津中小学英语网", ("njzxxyy.com",), (), ("译林版一年级英语",))
+        self.assertEqual(extract_papers(page("译林版2025一年级英语试卷"),
+            "https://www.njzxxyy.com/", strict, strict.keywords, date(2026, 11, 3)), [])
+        forged = dict(papers[0], link="https://www.21cnjy.com/html/6901.html")
+        self.assertEqual(newly_found(ScanResult([forged], [], 3), set(), date(2026, 11, 3)), [])
+
     def test_only_allowlisted_https_resource_urls_are_accepted(self) -> None:
         domains = ("21cnjy.com",)
         self.assertEqual(
@@ -249,6 +300,20 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
 
 
 class HistoryAndDeliveryTests(unittest.TestCase):
+    @patch("paper_auto_send.runner.save_sent")
+    @patch("paper_auto_send.runner.send_email")
+    @patch("paper_auto_send.runner.load_sent", return_value=set())
+    @patch("paper_auto_send.runner.crawl_all")
+    def test_primary_only_run_validates_and_saves_title_year_items(self, crawl, load, send, save) -> None:
+        paper = {"title": "苏教版2025一年级数学试卷",
+                 "link": "https://appsj.szxuexiao.com/html/1.html",
+                 "date_basis": "title_year", "title_year": "2025"}
+        crawl.return_value = ScanResult([paper], [], 1, {"小学试卷网": 1}, 1)
+        self.assertEqual(run(source_filter="primary"), 0)
+        self.assertEqual(crawl.call_args.args[1], "primary")
+        send.assert_called_once()
+        save.assert_called_once()
+
     def test_history_is_persisted_atomically_as_a_set(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sent_list.json"
