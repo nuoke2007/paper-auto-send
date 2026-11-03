@@ -2,11 +2,45 @@ import unittest
 from unittest.mock import patch
 from datetime import datetime
 
-from paper_auto_send.security import PAPER_CATEGORIES, build_email_html, paper_category
+from paper_auto_send.security import PAPER_CATEGORIES, build_email_html, paper_category, paper_subject
 from paper_auto_send.mailer import send_email
 
 
 class EmailFormatTests(unittest.TestCase):
+    def test_subjects_and_ambiguous_titles(self):
+        examples = {
+            "一年级语文上册期末卷": "语文",
+            "数学上册单元卷": "数学",
+            "英语Unit 1练习": "英语",
+            "道德与法治期中卷": "道德与法治",
+            "道法上册练习": "道德与法治",
+            "品德与生活测试": "道德与法治",
+            "科学期末卷": "科学",
+            "音乐试卷": "音乐",
+            "美术试卷": "美术",
+            "语文数学合集": "综合／未明确学科",
+            "期末试卷": "综合／未明确学科",
+        }
+        for title, expected in examples.items():
+            with self.subTest(title=title):
+                self.assertEqual(paper_subject(title), expected)
+
+    def test_subject_then_category_counts_and_single_assignment(self):
+        titles = ["数学期末卷", "语文期中卷", "数学单元卷", "语文期末卷", "英语课堂练习"]
+        papers = [{"title": title, "link": f"https://www.xxsj.org/sjdetail/{i}.html"}
+                  for i, title in enumerate(titles)]
+        body = build_email_html(papers)
+        self.assertIn("语文 2份 · 数学 2份 · 英语 1份", body)
+        self.assertLess(body.index(">语文 <span"), body.index(">数学 <span"))
+        self.assertLess(body.index(">数学 <span"), body.index(">英语 <span"))
+        self.assertNotIn(">科学 <span", body)
+        for paper in papers:
+            self.assertEqual(body.count(f'href="{paper["link"]}"'), 1)
+        math_section = body.split(">数学 <span", 1)[1].split("</td></tr>", 1)[0]
+        self.assertIn("数学期末卷", math_section)
+        self.assertIn("数学单元卷", math_section)
+        self.assertNotIn("语文期末卷", math_section)
+
     @patch.dict("os.environ", {"EMAIL_FROM": "sender@example.com", "EMAIL_TO": "recipient@example.com", "EMAIL_SMTP_PWD": "test-secret"})
     @patch("paper_auto_send.mailer.smtplib.SMTP_SSL")
     def test_preview_subject_is_not_a_new_resource_claim(self, smtp):
