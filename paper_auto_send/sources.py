@@ -557,6 +557,20 @@ def _verified_result_state(html: str) -> bool:
     )
 
 
+def _wait_for_result_state(page) -> None:
+    page.wait_for_function(
+        """() => {
+            const text = document.body?.innerText || "";
+            return Boolean(document.querySelector(".search-result li.pt-item, .resource-item"))
+                || /共\\s*0\\s*(?:个|条|份)/.test(text)
+                || ["暂无搜索结果", "没有搜索结果", "无搜索结果", "未搜索到相关资源",
+                    "请完成安全验证", "访问过于频繁", "access denied", "request blocked"]
+                    .some(marker => text.toLowerCase().includes(marker));
+        }""",
+        timeout=REQUEST_TIMEOUT_SECONDS * 1000,
+    )
+
+
 def _collect_free_results(page, source: Source, keyword: str, today: date) -> list[dict[str, str]]:
     free_url = _search_filter_url(page.content(), page.url, source, "免费")
     if free_url is None:
@@ -569,6 +583,7 @@ def _collect_free_results(page, source: Source, keyword: str, today: date) -> li
     papers: list[dict[str, str]] = []
     seen_pages: set[str] = set()
     for page_number in range(MAX_BROWSER_PAGES_PER_QUERY):
+        _wait_for_result_state(page)
         body = page.content()
         text = page.locator("body").inner_text(timeout=10_000).lower()
         if any(marker in text for marker in ("请完成安全验证", "访问过于频繁", "access denied", "request blocked")):
@@ -707,6 +722,7 @@ def _scan_browser_source(source: Source, today: date) -> tuple[list[dict[str, st
                             raise SourceAccessError(f"HTTP status {status}; source scan stopped")
                         if status is not None and status >= 400:
                             raise SourceError(f"search result returned HTTP status {status}")
+                        _wait_for_result_state(result_page)
                         body_text = result_page.locator("body").inner_text(timeout=10_000)
                         challenge = result_page.locator(
                             'input[name*="captcha"], input[id*="captcha"], iframe[src*="captcha"]'
