@@ -99,7 +99,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Daily public school-paper discovery and email delivery")
     parser.add_argument("--dry-run", action="store_true", help="Scan all sources without SMTP or history writes")
     parser.add_argument("--report", type=Path, help="Write a counts-only JSON diagnostic report")
-    parser.add_argument("--source", choices=("all", "primary"), default="all",
+    parser.add_argument("--source", choices=("all", "primary", "xxsj"), default="all",
                         help="Scan all sources or only the primary paper site")
     args = parser.parse_args()
     logging.basicConfig(

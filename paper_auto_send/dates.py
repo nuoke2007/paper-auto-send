@@ -42,7 +42,7 @@ def title_year(title: str) -> int | None:
     if len(years) == 2:
         start, end = map(int, years)
         if end == start + 1 and re.search(
-            rf"{start}\s*[-—–~～至/]\s*{end}(?:\s*学年)?", title
+            rf"{start}\s*(?:[-—–~～至/]+|年\s*至)\s*{end}(?:\s*学年)?", title
         ):
             return start
     return None

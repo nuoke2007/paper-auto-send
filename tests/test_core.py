@@ -14,6 +14,7 @@ from paper_auto_send.history import load_sent, save_sent
 from paper_auto_send.mailer import MailDeliveryError, send_email
 from paper_auto_send.runner import newly_found, run
 from paper_auto_send.security import build_email_html, safe_resource_url
+from paper_auto_send.regions import is_jiangsu_title
 from paper_auto_send.sources import (
     ScanResult,
     Source,
@@ -22,6 +23,8 @@ from paper_auto_send.sources import (
     _has_public_listing,
     _search_requests,
     _scan_source,
+    _scan_xxsj,
+    crawl_all,
     _search_filter_url,
     _verified_result_state,
     extract_papers,
@@ -91,6 +94,7 @@ class DateFilterTests(unittest.TestCase):
             ("2025-2026学年试卷", 2025),
             ("2025—2026 学年试卷", 2025),
             ("2025至2026学年", 2025),
+            ("2025--2026学年", 2025),
             ("试卷无年份", None),
             ("2024-2026学年", None),
             ("2024和2025试卷", None),
@@ -121,6 +125,95 @@ class DateFilterTests(unittest.TestCase):
 
 
 class UrlAndHtmlSafetyTests(unittest.TestCase):
+    def test_xxsj_jiangsu_or_version_with_strict_year_grade_and_term(self) -> None:
+        day = date(2026, 11, 3)
+        source = source_definitions(keywords_for_date(day))[3]
+        def extract(title):
+            return extract_papers(f'<li><a href="/sjdetail/139649.html">{title}</a></li>',
+                source.entry_urls[0], source, source.keywords, day)
+        for title in (
+            "2025~2026学年江苏省洪泽区一年级上册数学试卷",
+            "2025--2026学年阜宁县一年级上学期数学试卷",
+            "2025南通市一年级第一学期数学试题",
+            "2025昆山市一年级上册语文试卷",
+            "2025泰兴市一年级上册数学试卷",
+            "2025浙江省统编版一年级语文上册试卷",
+        ):
+            with self.subTest(title=title):
+                papers = extract(title)
+                self.assertEqual(len(papers), 1)
+                self.assertTrue(safe_resource_url(papers[0]["link"], ("xxsj.org",)))
+                self.assertEqual(len(newly_found(ScanResult(papers, [], 1), set(), day)), 1)
+        for title in (
+            "2025河南省一年级上册数学试卷",
+            "2025鼓楼区一年级上册数学试卷",
+            "江苏省一年级上册数学试卷",
+            "2025江苏省二年级上册数学试卷",
+            "2025江苏省一年级下册数学试卷",
+            "2020江苏省一年级上册数学试卷",
+            "2025江苏省一年级上册科学期末知识点归纳",
+        ):
+            self.assertEqual(extract(title), [], title)
+        other = source_definitions(keywords_for_date(day))[0]
+        self.assertEqual(extract_papers('<a href="/html/1.html">2025阜宁县一年级上册数学试卷</a>',
+            other.entry_urls[0], other, other.keywords, day), [])
+        self.assertIn("地区依据", build_email_html(extract("2025阜宁县一年级上册数学试卷")))
+
+    def test_jiangsu_places_do_not_accept_ambiguous_districts_or_street_names(self) -> None:
+        for place in ("江苏省", "苏州市", "南京市", "启东市", "东海县", "涟水县", "吴江区", "宿豫区"):
+            self.assertTrue(is_jiangsu_title(place))
+        for place in ("鼓楼区", "海州区", "河北省", "南京路", "苏州路"):
+            self.assertFalse(is_jiangsu_title(place))
+
+    def test_xxsj_scan_follows_only_public_current_grade_category_links(self) -> None:
+        source = source_definitions(keywords_for_date(date(2026, 11, 3)))[3]
+        resource = '<a href="/sjdetail/1.html">2025阜宁县一年级上册数学试卷</a>'
+        grade = resource + '<a href="/gsubject/yinianji/shuxue.html">数学</a>'
+        subject = resource + (
+            '<a href="/gsemeter/yinianji/shuxue/sc.html">上册</a>'
+            '<a href="/gsemeter/yinianji/shuxue/xc.html">下册</a>'
+            '<a href="/sarea/js/yinianji/shuxue.html">江苏</a>'
+            '<a href="https://evil.example/gsubject/yinianji/yuwen.html">语文</a>'
+        )
+        fetcher = Mock()
+        pages = {
+            source.entry_urls[0]: grade,
+            "https://www.xxsj.org/gsubject/yinianji/shuxue.html": subject,
+            "https://www.xxsj.org/gsemeter/yinianji/shuxue/sc.html": resource,
+            "https://www.xxsj.org/sarea/js/yinianji/shuxue.html": resource,
+        }
+        fetcher.get.side_effect = lambda url, src: (pages[url], url)
+        papers, verified = _scan_xxsj(source, date(2026, 11, 3), fetcher)
+        self.assertTrue(verified)
+        self.assertEqual(fetcher.get.call_count, 4)
+        self.assertEqual(len(papers), 4)
+        fetcher.get.side_effect = SourceAccessError("HTTP status 403")
+        fetcher.get.reset_mock()
+        self.assertFalse(_scan_xxsj(source, date(2026, 11, 3), fetcher)[1])
+        self.assertEqual(fetcher.get.call_count, 1)
+        fetcher.get.side_effect = lambda url, src: ("<html>站点维护中</html>", url)
+        self.assertFalse(_scan_xxsj(source, date(2026, 11, 3), fetcher)[1])
+
+    def test_xxsj_page_budget_is_enforced(self) -> None:
+        source = source_definitions(keywords_for_date(date(2026, 11, 3)))[3]
+        resource = '<a href="/sjdetail/1.html">2025阜宁县一年级上册数学试卷</a>'
+        page = resource + '<a href="/gsubject/yinianji/shuxue.html">数学</a>'
+        fetcher = Mock()
+        fetcher.get.side_effect = lambda url, src: (page, url)
+        with patch("paper_auto_send.sources.MAX_RESULT_PAGES_PER_SOURCE", 1):
+            papers, verified = _scan_xxsj(source, date(2026, 11, 3), fetcher)
+        self.assertTrue(verified)
+        self.assertEqual(len(papers), 1)
+        self.assertEqual(fetcher.get.call_count, 1)
+
+    @patch("paper_auto_send.sources._scan_xxsj", return_value=([], True))
+    def test_xxsj_only_scan_has_one_expected_source(self, scan) -> None:
+        result = crawl_all(date(2026, 11, 3), "xxsj")
+        self.assertEqual(result.expected_sources, 1)
+        self.assertEqual(result.successful_sources, 1)
+        self.assertEqual(len(source_definitions(keywords_for_date(date(2026, 11, 3)))), 4)
+        scan.assert_called_once()
+
     def test_all_sources_use_title_year_and_ignore_publication_dates(self) -> None:
         source = source_definitions(keywords_for_date(date(2026, 11, 3)))[0]
         def page(title, extra=""):

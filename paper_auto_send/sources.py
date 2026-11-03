@@ -18,7 +18,8 @@ import requests
 from bs4 import BeautifulSoup, Tag
 
 from .dates import is_recent_title_year, title_year
-from .academic import matches_current_term
+from .academic import matches_current_term, semester_for_date
+from .regions import is_jiangsu_title
 from .security import safe_resource_url
 
 LOGGER = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ class Source:
     only_free: bool = False
     exclude_terms: tuple[str, ...] = ()
     browser_search_url: str | None = None
+    jiangsu_alternative: bool = False
 
 
 @dataclass
@@ -81,6 +83,7 @@ def source_definitions(keywords: tuple[str, ...]) -> tuple[Source, ...]:
         primary_entries.append(
             f"https://appsj.szxuexiao.com/{grade_pages[english_grade.group()]}/index.html"
         )
+    grade_slug = grade_pages.get(english_grade.group() if english_grade else "")
     return (
         Source(
             "小学试卷网",
@@ -112,6 +115,13 @@ def source_definitions(keywords: tuple[str, ...]) -> tuple[Source, ...]:
             ),
             only_free=True,
             browser_search_url="https://www.21cnjy.com/",
+        ),
+        Source(
+            "小学试卷网（xxsj.org）",
+            ("xxsj.org",),
+            (f"https://www.xxsj.org/grade/{grade_slug}.html",) if grade_slug else ("https://www.xxsj.org/",),
+            keywords,
+            jiangsu_alternative=True,
         ),
     )
 
@@ -366,9 +376,14 @@ def extract_papers(
             resource_text += " " + str(metadata.get("subject_name", ""))
         if any(term in resource_text for term in source.exclude_terms):
             continue
-        if not any(_contains_keyword(resource_text, keyword) for keyword in keywords):
+        jiangsu_match = source.jiangsu_alternative and is_jiangsu_title(title)
+        if not any(_contains_keyword(resource_text, keyword) for keyword in keywords) and not jiangsu_match:
             continue
         if not matches_current_term(title, today):
+            continue
+        if source.jiangsu_alternative and not any(
+            word in title for word in ("卷", "试题", "测试", "练习", "检测", "测评", "考试", "作业", "测验", "默写", "听力")
+        ):
             continue
         if source.only_free and not _has_explicit_free_label(container):
             continue
@@ -379,7 +394,7 @@ def extract_papers(
             if str(metadata.get("coin", "0")) not in ("0", "0.0"):
                 continue
         elif not any(
-            word in title for word in ("试卷", "测试", "练习", "检测", "默写", "听力", "期末", "期中", "测评", "考试", "作业", "卷")
+            word in title for word in ("试卷", "试题", "测试", "练习", "检测", "默写", "听力", "期末", "期中", "测评", "考试", "作业", "卷")
         ):
             continue
         if not is_recent_title_year(title, today):
@@ -391,6 +406,8 @@ def extract_papers(
             "date_basis": "title_year",
             "title_year": str(title_year(title)),
         }
+        if jiangsu_match:
+            item["region_basis"] = "江苏地区标题"
         results.append(item)
     return results
 
@@ -747,6 +764,62 @@ def _scan_browser_source(source: Source, today: date) -> tuple[list[dict[str, st
     return papers, successful
 
 
+def _scan_xxsj(source: Source, today: date, fetcher: PoliteFetcher) -> tuple[list[dict[str, str]], bool]:
+    grade_path = urlsplit(source.entry_urls[0]).path
+    grade = grade_path.rsplit("/", 1)[-1].removesuffix(".html")
+    semester = "sc" if semester_for_date(today) == "上" else "xc"
+    subjects = r"(?:yuwen|shuxue|yingyu|daode|kexue)"
+    category_patterns = (
+        rf"/gsubject/{grade}/{subjects}\.html",
+        rf"/gsemeter/{grade}/{subjects}/{semester}\.html",
+        rf"/sarea/js/{grade}/{subjects}\.html",
+    )
+    paging = re.compile(
+        rf"/(?:gsemeter/{grade}/{subjects}/{semester}|sarea/js/{grade}/{subjects})/2\.html"
+    )
+    queue = list(source.entry_urls)
+    visited: set[str] = set()
+    papers: list[dict[str, str]] = []
+    errors: list[str] = []
+    while queue and len(visited) < MAX_RESULT_PAGES_PER_SOURCE:
+        url = queue.pop(0)
+        if url in visited:
+            continue
+        visited.add(url)
+        try:
+            body, final_url = fetcher.get(url, source)
+        except SourceAccessError as exc:
+            LOGGER.error("%s: %s", source.name, exc)
+            return papers, False
+        except SourceError as exc:
+            errors.append(str(exc))
+            continue
+        soup = BeautifulSoup(body, "html.parser")
+        resource_links = [
+            anchor for anchor in soup.select("a[href]")
+            if re.fullmatch(r"/sjdetail/\d+\.html", urlsplit(urljoin(final_url, str(anchor["href"]))).path)
+        ]
+        if not resource_links and not any(marker in soup.get_text() for marker in EMPTY_RESULT_MARKERS):
+            errors.append("category has neither resource links nor an explicit empty state")
+            continue
+        # Only detail links are resources; navigation/sidebar labels cannot qualify.
+        listing = "<ul>" + "".join(f"<li>{anchor}</li>" for anchor in resource_links) + "</ul>"
+        papers.extend(extract_papers(listing, final_url, source, source.keywords, today))
+        for anchor in soup.select("a[href]"):
+            target = safe_resource_url(urljoin(final_url, str(anchor["href"])), source.domains)
+            if target is None or target in visited or target in queue:
+                continue
+            path = urlsplit(target).path
+            if any(re.fullmatch(pattern, path) for pattern in category_patterns) or paging.fullmatch(path):
+                queue.append(target)
+    if queue:
+        LOGGER.warning("%s: daily scan bounded at %d category pages", source.name, MAX_RESULT_PAGES_PER_SOURCE)
+    if errors:
+        LOGGER.warning("%s: %d diagnostic(s); first: %s", source.name, len(errors), errors[0])
+    LOGGER.info("%s: %d category page(s), %d candidate(s) discovered", source.name, len(visited), len(papers))
+    return papers, bool(visited) and not errors
+
+
 def crawl_all(today: date, source_filter: str = "all") -> ScanResult:
     fetcher = PoliteFetcher()
     papers: list[dict[str, str]] = []
@@ -755,13 +828,17 @@ def crawl_all(today: date, source_filter: str = "all") -> ScanResult:
     source_counts: dict[str, int] = {}
     from .academic import keywords_for_date
 
-    if source_filter not in ("all", "primary"):
-        raise ValueError("source_filter must be all or primary")
+    if source_filter not in ("all", "primary", "xxsj"):
+        raise ValueError("source_filter must be all, primary or xxsj")
     sources = source_definitions(keywords_for_date(today))
     if source_filter == "primary":
         sources = sources[:1]
+    elif source_filter == "xxsj":
+        sources = sources[3:]
     for source in sources:
-        if source.browser_search_url:
+        if source.jiangsu_alternative:
+            source_papers, successful = _scan_xxsj(source, today, fetcher)
+        elif source.browser_search_url:
             source_papers, successful = _scan_browser_source(source, today)
         else:
             source_papers, successful = _scan_source(source, today, fetcher)

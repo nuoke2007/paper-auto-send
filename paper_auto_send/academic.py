@@ -48,4 +48,6 @@ def matches_current_term(title: str, today: date) -> bool:
     if re.search(r"(?:上[、/及和与]?下|下[、/及和与]?上)(?:册|学期)", compact):
         return False
     terms = set(re.findall(r"([上下])(?:册|学期|半学期)", compact))
+    for number in re.findall(r"第([一二12])学期", compact):
+        terms.add("上" if number in ("一", "1") else "下")
     return terms == {semester_for_date(today)}

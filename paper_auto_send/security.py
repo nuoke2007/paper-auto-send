@@ -4,7 +4,7 @@ import html
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-RESOURCE_DOMAINS = ("appsj.szxuexiao.com", "njzxxyy.com", "21cnjy.com")
+RESOURCE_DOMAINS = ("appsj.szxuexiao.com", "njzxxyy.com", "21cnjy.com", "xxsj.org")
 
 
 def _host_allowed(host: str, allowed_domains: tuple[str, ...]) -> bool:
@@ -56,10 +56,12 @@ def build_email_html(papers: list[dict[str, str]]) -> str:
             timing = f"标题年份：{html.escape(paper['title_year'], quote=True)}（非发布日期；跨年学年取起始年）"
         else:
             timing = f"发布日期：{html.escape(paper.get('published', '未提供'), quote=True)}"
+        if paper.get("region_basis"):
+            timing += f"；地区依据：{html.escape(paper['region_basis'], quote=True)}"
         rows.append(f'<li>{title} — {timing} — <a href="{link}">预览&下载</a></li>')
     return (
         "<!doctype html><html><body>"
         "<h3>今日新增试卷（苏州园区适配 · 近3年内）</h3>"
-        "<p>来源：小学试卷网 / 牛津中小学英语网 / 二一教育（仅明确免费资源）</p>"
+        "<p>来源：小学试卷网 / 牛津中小学英语网 / 二一教育（仅明确免费资源） / xxsj.org</p>"
         f"<ul>{''.join(rows)}</ul></body></html>"
     )
