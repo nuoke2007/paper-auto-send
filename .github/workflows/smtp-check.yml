@@ -1,0 +1,43 @@
+name: Verify SMTP connection
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-smtp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify TLS and SMTP authentication without sending email
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_SMTP_PWD: ${{ secrets.EMAIL_SMTP_PWD }}
+        shell: python
+        run: |
+          import os
+          import smtplib
+          import ssl
+          import sys
+
+          names = ("EMAIL_FROM", "EMAIL_TO", "EMAIL_SMTP_PWD")
+          if any(not os.environ.get(name) for name in names):
+              print("::error::Required email Secrets are missing.")
+              sys.exit(1)
+          try:
+              with smtplib.SMTP_SSL(
+                  "smtp.126.com", 465, timeout=30,
+                  context=ssl.create_default_context(),
+              ) as server:
+                  server.login(os.environ["EMAIL_FROM"], os.environ["EMAIL_SMTP_PWD"])
+          except (OSError, smtplib.SMTPException) as exc:
+              print(f"::error::SMTP verification failed ({type(exc).__name__}).")
+              sys.exit(1)
+          print("SMTP TLS connection and authentication succeeded. No email was sent.")

@@ -38,6 +38,8 @@ gh secret set EMAIL_SMTP_PWD --repo OWNER/paper-auto-send
 
 SMTP 使用 `smtp.126.com:465`，保持 TLS 验证。授权码只能由邮箱所有者在邮箱服务中取得；本项目不会自动改变邮箱密码或安全设置。
 
+保存或更换授权码后，可以在 Actions 手动运行 **Verify SMTP connection**（`smtp-check.yml`）。它只验证 TLS 连接和 SMTP 登录，不发送邮件、不扫描站点、不修改发送历史；成功不代表收件箱已收到邮件，真实投递仍需有合格新增资源。
+
 ## 定时与手动执行
 
 `.github/workflows/run.yml` 使用 UTC `0 2 * * *`，即北京时间 10:00，并提供手动触发输入 `dry_run`（默认开启）。
