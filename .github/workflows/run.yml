@@ -1,0 +1,86 @@
+name: 每日试卷增量推送
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only scan and diagnose; do not send email or change history"
+        required: true
+        type: boolean
+        default: true
+
+concurrency:
+  group: paper-auto-send-history
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  crawl-and-send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: true
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Run regression tests
+        run: python -m unittest discover -v
+      - name: Run daily scan
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_SMTP_PWD: ${{ secrets.EMAIL_SMTP_PWD }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          DELIVERY_ENABLED: ${{ vars.DELIVERY_ENABLED || 'false' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$DRY_RUN" == "true" || "$DELIVERY_ENABLED" != "true" ]]; then
+            echo "::notice::Scan-only mode: no email or history changes."
+            python main.py --dry-run --report run-summary.json
+          else
+            for name in EMAIL_FROM EMAIL_TO EMAIL_SMTP_PWD; do
+              if [[ -z "${!name}" ]]; then
+                echo "::error::$name is required for delivery."
+                exit 1
+              fi
+            done
+            python main.py --report run-summary.json
+          fi
+      - name: Persist sent history
+        if: ${{ always() && !cancelled() }}
+        env:
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "paper-auto-send"
+          git config user.email "paper-auto-send@users.noreply.github.com"
+          git add sent_list.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update sent resource history" -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>"
+            git pull --rebase origin "$BRANCH"
+            git push origin "HEAD:$BRANCH"
+          fi
+      - name: Preserve diagnostic counts and history recovery copy
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-state-${{ github.run_id }}
+          path: |
+            run-summary.json
+            sent_list.json
+          retention-days: 30
+          if-no-files-found: warn
