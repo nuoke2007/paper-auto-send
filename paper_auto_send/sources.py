@@ -18,6 +18,7 @@ import requests
 from bs4 import BeautifulSoup, Tag
 
 from .dates import is_recent_title_year, title_year
+from .academic import matches_current_term
 from .security import safe_resource_url
 
 LOGGER = logging.getLogger(__name__)
@@ -366,6 +367,8 @@ def extract_papers(
         if any(term in resource_text for term in source.exclude_terms):
             continue
         if not any(_contains_keyword(resource_text, keyword) for keyword in keywords):
+            continue
+        if not matches_current_term(title, today):
             continue
         if source.only_free and not _has_explicit_free_label(container):
             continue

@@ -8,7 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from paper_auto_send.academic import grade_for_date, keywords_for_date
+from paper_auto_send.academic import grade_for_date, keywords_for_date, matches_current_term, semester_for_date
 from paper_auto_send.dates import is_recent, is_recent_title_year, parse_publication_date, three_year_cutoff, title_year
 from paper_auto_send.history import load_sent, save_sent
 from paper_auto_send.mailer import MailDeliveryError, send_email
@@ -30,6 +30,44 @@ from paper_auto_send.sources import (
 
 
 class AcademicCalendarTests(unittest.TestCase):
+    def test_semester_boundaries_and_grade_progression(self) -> None:
+        for day, grade, term in (
+            (date(2026, 11, 3), 1, "上"),
+            (date(2027, 1, 31), 1, "上"),
+            (date(2027, 2, 1), 1, "下"),
+            (date(2027, 8, 31), 1, "下"),
+            (date(2027, 9, 1), 2, "上"),
+        ):
+            with self.subTest(day=day):
+                self.assertEqual(semester_for_date(day), term)
+                self.assertEqual(grade_for_date(day), grade)
+                self.assertTrue(matches_current_term(f"{grade}年级数学{term}册", day))
+
+    def test_title_requires_unambiguous_current_grade_and_semester(self) -> None:
+        day = date(2026, 11, 3)
+        for title in ("一年级上册数学", "一年级数学上学期", "一年级上半学期试卷", "1 年级 上 册"):
+            self.assertTrue(matches_current_term(title, day), title)
+        for title in ("一年级下册数学", "二年级上册", "一年级试卷", "一年级上下册",
+                      "一年级上册下册合集", "十一年级上册", "一年级二年级上册", "上学期数学"):
+            self.assertFalse(matches_current_term(title, day), title)
+        self.assertFalse(matches_current_term("一年级上下册", date(2027, 3, 1)))
+
+    def test_delivery_filter_rejects_other_terms_and_grades(self) -> None:
+        papers = [
+            {"title": title, "link": f"https://appsj.szxuexiao.com/html/{index}.html",
+             "date_basis": "title_year", "title_year": "2025"}
+            for index, title in enumerate((
+                "2025一年级上册试卷", "2025一年级下册试卷",
+                "2025二年级上册试卷", "2025一年级试卷"))
+        ]
+        result = ScanResult(papers, [], 3)
+        self.assertEqual([p["title"] for p in newly_found(result, set(), date(2026, 11, 3))],
+                         ["2025一年级上册试卷"])
+        self.assertEqual([p["title"] for p in newly_found(result, set(), date(2027, 3, 1))],
+                         ["2025一年级下册试卷"])
+        self.assertEqual([p["title"] for p in newly_found(result, set(), date(2027, 9, 1))],
+                         ["2025二年级上册试卷"])
+
     def test_grade_advances_at_september_and_stays_during_summer(self) -> None:
         self.assertEqual(grade_for_date(date(2026, 8, 31)), 1)
         self.assertEqual(grade_for_date(date(2026, 9, 1)), 1)
@@ -87,7 +125,7 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
         source = source_definitions(keywords_for_date(date(2026, 11, 3)))[0]
         def page(title, extra=""):
             return f'<li><a href="/html/6901.html">{title}</a>{extra}</li>'
-        title = "苏教版2025-2026一年级数学期末测试卷"
+        title = "苏教版2025-2026一年级数学上册期末测试卷"
         papers = extract_papers(page(title), source.entry_urls[0], source, source.keywords, date(2026, 11, 3))
         self.assertEqual(len(papers), 1)
         self.assertNotIn("published", papers[0])
@@ -110,7 +148,7 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
             self.assertEqual(extract_papers(page(invalid, '<time>2026-11-01</time>'),
                 source.entry_urls[0], source, source.keywords, date(2026, 11, 3)), [])
         strict = Source("牛津中小学英语网", ("njzxxyy.com",), (), ("译林版一年级英语",))
-        self.assertEqual(len(extract_papers(page("译林版2025一年级英语试卷"),
+        self.assertEqual(len(extract_papers(page("译林版2025一年级英语上册试卷"),
             "https://www.njzxxyy.com/", strict, strict.keywords, date(2026, 11, 3))), 1)
         forged = dict(papers[0], link="https://www.21cnjy.com/html/6901.html")
         self.assertEqual(len(newly_found(ScanResult([forged], [], 3), set(), date(2026, 11, 3))), 1)
@@ -144,7 +182,7 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
         item = (
             '<ul class="resource-list"><li class="resource-item">'
             '<span class="tag-free">免费</span><a href="/detail/1">'
-            "苏教版2025一年级数学测试卷</a><span class=pubtime>2025-03-02</span>"
+            "苏教版2025一年级数学上册测试卷</a><span class=pubtime>2025-03-02</span>"
             "</li></ul>"
         )
         self.assertEqual(len(extract_papers(item, base, source, source.keywords, date(2026, 1, 1))), 1)
@@ -163,7 +201,7 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
         source = Source("小学试卷网", ("appsj.szxuexiao.com",), (), ("苏教版一年级数学",))
         page = (
             '<div class="resource-item"><a href="/html/1.html">'
-            "苏教版2025-2026一年级数学测试卷</a></div>"
+            "苏教版2025-2026一年级数学上册测试卷</a></div>"
         )
         base = "https://appsj.szxuexiao.com/sujiaoban/index.html"
         self.assertTrue(_has_public_listing(page, base, source, source.keywords))
@@ -173,7 +211,7 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
         source = Source("小学试卷网", ("appsj.szxuexiao.com",), (), ("苏教版一年级数学",))
         page = (
             '<article><a href="/html/1.html">'
-            "苏教版2025-2026一年级数学测试卷</a>"
+            "苏教版2025-2026一年级数学上册测试卷</a>"
             '<time datetime="2025-11-02"></time></article>'
         )
         papers = extract_papers(
@@ -189,7 +227,7 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
 
     def test_title_dates_supply_year_but_reply_dates_do_not(self) -> None:
         source = Source("小学试卷网", ("appsj.szxuexiao.com",), (), ("苏教版一年级数学",))
-        page = '<li><a href="/html/1.html">苏教版一年级数学2025-11-02练习</a><span class="reply-time">2025-11-03</span></li>'
+        page = '<li><a href="/html/1.html">苏教版一年级数学上册2025-11-02练习</a><span class="reply-time">2025-11-03</span></li>'
         self.assertEqual(len(extract_papers(page, "https://appsj.szxuexiao.com/", source, source.keywords, date(2026, 1, 1))), 1)
         page = page.replace("2025-11-02", "")
         self.assertEqual(extract_papers(page, "https://appsj.szxuexiao.com/", source, source.keywords, date(2026, 1, 1)), [])
@@ -208,7 +246,7 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
             return (
                 f'<li class="pt-item"><div hmtproperty="{encoded}">'
                 '<a href="https://www.21cnjy.com/H/3/45/123.shtml?kw=x&qid=changing&rank=1">'
-                '2025一年级数学期末测试卷</a></div><span class="time">2025-11-03</span>'
+                '2025一年级数学上册期末测试卷</a></div><span class="time">2025-11-03</span>'
                 f'<span class="price">{label}</span></li>'
             )
         papers = extract_papers(page_for(metadata), "https://www.21cnjy.com/", source, source.keywords, date(2026, 1, 1))
@@ -313,12 +351,17 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
 
 
 class HistoryAndDeliveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        clock = patch("paper_auto_send.runner.datetime")
+        self.addCleanup(clock.stop)
+        clock.start().now.return_value = datetime(2026, 11, 3, 10, 0)
+
     @patch("paper_auto_send.runner.save_sent")
     @patch("paper_auto_send.runner.send_email")
     @patch("paper_auto_send.runner.load_sent", return_value=set())
     @patch("paper_auto_send.runner.crawl_all")
     def test_primary_only_run_validates_and_saves_title_year_items(self, crawl, load, send, save) -> None:
-        paper = {"title": "苏教版2025一年级数学试卷",
+        paper = {"title": "苏教版2025一年级数学上册试卷",
                  "link": "https://appsj.szxuexiao.com/html/1.html",
                  "date_basis": "title_year", "title_year": "2025"}
         crawl.return_value = ScanResult([paper], [], 1, {"小学试卷网": 1}, 1)
@@ -388,7 +431,7 @@ class HistoryAndDeliveryTests(unittest.TestCase):
     @patch(
         "paper_auto_send.runner.crawl_all",
         return_value=ScanResult(
-            [{"title": "2025练习卷", "link": "https://appsj.szxuexiao.com/paper/1", "date_basis": "title_year", "title_year": "2025"}],
+            [{"title": "2025一年级上册练习卷", "link": "https://appsj.szxuexiao.com/paper/1", "date_basis": "title_year", "title_year": "2025"}],
             [],
             3,
         ),
@@ -406,7 +449,7 @@ class HistoryAndDeliveryTests(unittest.TestCase):
     @patch(
         "paper_auto_send.runner.crawl_all",
         return_value=ScanResult(
-            [{"title": "2025练习卷", "link": "https://appsj.szxuexiao.com/paper/1", "date_basis": "title_year", "title_year": "2025"}],
+            [{"title": "2025一年级上册练习卷", "link": "https://appsj.szxuexiao.com/paper/1", "date_basis": "title_year", "title_year": "2025"}],
             [],
             3,
         ),
@@ -422,7 +465,7 @@ class HistoryAndDeliveryTests(unittest.TestCase):
     @patch("paper_auto_send.runner.crawl_all")
     def test_dry_run_reports_but_never_delivers_or_changes_history(self, crawl, load, send, save) -> None:
         crawl.return_value = ScanResult(
-            [{"title": "2025练习卷", "link": "https://appsj.szxuexiao.com/html/1.html", "date_basis": "title_year", "title_year": "2025"}],
+            [{"title": "2025一年级上册练习卷", "link": "https://appsj.szxuexiao.com/html/1.html", "date_basis": "title_year", "title_year": "2025"}],
             [], 3,
         )
         with tempfile.TemporaryDirectory() as directory:

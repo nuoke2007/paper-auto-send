@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import re
 
 SUBJECTS = (
     ("部编版", "语文"),
@@ -31,3 +32,20 @@ def keywords_for_grade(grade: int) -> tuple[str, ...]:
 
 def keywords_for_date(today: date) -> tuple[str, ...]:
     return keywords_for_grade(grade_for_date(today))
+
+
+def semester_for_date(today: date) -> str:
+    return "上" if today.month >= 9 or today.month == 1 else "下"
+
+
+def matches_current_term(title: str, today: date) -> bool:
+    compact = re.sub(r"\s+", "", title)
+    grade = grade_for_date(today)
+    label = CHINESE_GRADES[grade - 1] if grade <= len(CHINESE_GRADES) else str(grade)
+    grades = re.findall(r"(?<![一二三四五六七八九十])([一二三四五六七八九十]+|\d+)年级", compact)
+    if not grades or any(value not in (label, str(grade)) for value in grades):
+        return False
+    if re.search(r"(?:上[、/及和与]?下|下[、/及和与]?上)(?:册|学期)", compact):
+        return False
+    terms = set(re.findall(r"([上下])(?:册|学期|半学期)", compact))
+    return terms == {semester_for_date(today)}

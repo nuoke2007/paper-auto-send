@@ -9,6 +9,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .dates import is_recent_title_year, title_year
+from .academic import matches_current_term, grade_for_date, semester_for_date
 from .history import DEFAULT_HISTORY_PATH, load_sent, save_sent
 from .mailer import MailDeliveryError, send_email
 from .security import RESOURCE_DOMAINS, safe_resource_url
@@ -34,7 +35,7 @@ def newly_found(result: ScanResult, sent: set[str], today: date | None = None) -
             and paper.get("title_year") == str(title_year(paper.get("title", "")))
             and is_recent_title_year(paper.get("title", ""), check_date)
         )
-        if not title_based:
+        if not title_based or not matches_current_term(paper.get("title", ""), check_date):
             continue
         item = dict(paper)
         item["link"] = safe_link
@@ -60,6 +61,8 @@ def run(dry_run: bool = False, report_path: Path | None = None, source_filter: s
     failed = bool(result.failures) or result.successful_sources != result.expected_sources
     report = {
         "date": today.isoformat(),
+        "grade": grade_for_date(today),
+        "semester": semester_for_date(today),
         "dry_run": dry_run,
         "successful_sources": result.successful_sources,
         "expected_sources": result.expected_sources,
