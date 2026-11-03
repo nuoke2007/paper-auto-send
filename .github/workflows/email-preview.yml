@@ -1,0 +1,55 @@
+name: Send email layout preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paper-auto-send-history
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Run regression tests
+        run: python -m unittest discover -v
+      - name: Send one preview using real qualifying resources without changing history
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_SMTP_PWD: ${{ secrets.EMAIL_SMTP_PWD }}
+        shell: python
+        run: |
+          import logging
+          import sys
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          from paper_auto_send.mailer import MailDeliveryError, send_email
+          from paper_auto_send.runner import newly_found
+          from paper_auto_send.sources import crawl_all
+
+          logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+          today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+          result = crawl_all(today, "xxsj")
+          if result.failures or result.successful_sources != 1:
+              sys.exit("Preview scan failed; no email sent.")
+          papers = newly_found(result, set(), today)
+          if not papers:
+              sys.exit("No qualifying resources for preview; no email sent.")
+          try:
+              send_email(papers, test_email=True)
+          except MailDeliveryError as exc:
+              sys.exit(str(exc))
+          print(f"SMTP accepted one layout test email containing {len(papers)} resources. History unchanged.")

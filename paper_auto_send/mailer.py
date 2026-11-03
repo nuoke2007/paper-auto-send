@@ -18,7 +18,7 @@ class MailDeliveryError(RuntimeError):
     pass
 
 
-def send_email(papers: list[dict[str, str]], now: datetime | None = None) -> bool:
+def send_email(papers: list[dict[str, str]], now: datetime | None = None, *, test_email: bool = False) -> bool:
     if not papers:
         return False
     sender = os.environ.get("EMAIL_FROM", "").strip()
@@ -39,8 +39,11 @@ def send_email(papers: list[dict[str, str]], now: datetime | None = None) -> boo
     message["From"] = sender
     message["To"] = recipient
     message["Date"] = format_datetime(timestamp)
-    message["Subject"] = f"【每日试卷增量推送】{timestamp:%Y-%m-%d} 新增{len(papers)}份试卷"
-    message.set_content("今日新增试卷详见 HTML 邮件正文。")
+    if test_email:
+        message["Subject"] = f"【试卷邮件排版测试】{timestamp:%Y-%m-%d} {len(papers)}份试卷（不修改发送历史）"
+    else:
+        message["Subject"] = f"【每日试卷增量推送】{timestamp:%Y-%m-%d} 新增{len(papers)}份试卷"
+    message.set_content("试卷分类详见 HTML 邮件正文。" if test_email else "今日新增试卷详见 HTML 邮件正文。")
     message.add_alternative(build_email_html(papers), subtype="html")
 
     try:

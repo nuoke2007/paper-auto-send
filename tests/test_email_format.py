@@ -1,9 +1,25 @@
 import unittest
+from unittest.mock import patch
+from datetime import datetime
 
 from paper_auto_send.security import PAPER_CATEGORIES, build_email_html, paper_category
+from paper_auto_send.mailer import send_email
 
 
 class EmailFormatTests(unittest.TestCase):
+    @patch.dict("os.environ", {"EMAIL_FROM": "sender@example.com", "EMAIL_TO": "recipient@example.com", "EMAIL_SMTP_PWD": "test-secret"})
+    @patch("paper_auto_send.mailer.smtplib.SMTP_SSL")
+    def test_preview_subject_is_not_a_new_resource_claim(self, smtp):
+        server = smtp.return_value.__enter__.return_value
+        server.send_message.return_value = {}
+        self.assertTrue(send_email(
+            [{"title": "2025一年级上册期末试卷", "link": "https://www.xxsj.org/sjdetail/1.html"}],
+            datetime(2026, 11, 3, 10, 0), test_email=True))
+        message = server.send_message.call_args.args[0]
+        self.assertIn("排版测试", message["Subject"])
+        self.assertNotIn("新增", message["Subject"])
+        self.assertIn("期末考试卷", message.get_body(preferencelist=("html",)).get_content())
+
     def test_categories_and_precedence(self):
         examples = {
             "一年级上册期中考试卷": "期中考试卷",
