@@ -33,9 +33,12 @@ jobs:
         shell: python
         run: |
           import logging
+          import os
           import sys
           from datetime import datetime
           from zoneinfo import ZoneInfo
+
+          sys.path.insert(0, os.environ["GITHUB_WORKSPACE"])
           from paper_auto_send.mailer import MailDeliveryError, send_email
           from paper_auto_send.runner import newly_found
           from paper_auto_send.sources import crawl_all
