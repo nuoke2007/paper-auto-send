@@ -7,6 +7,24 @@ from paper_auto_send.mailer import send_email
 
 
 class EmailFormatTests(unittest.TestCase):
+    @patch.dict("os.environ", {"EMAIL_FROM": "sender@example.com", "EMAIL_TO": "recipient@example.com", "EMAIL_SMTP_PWD": "test-secret"})
+    @patch("paper_auto_send.mailer.smtplib.SMTP_SSL")
+    def test_daily_summary_labels_resends_and_escapes_source_status(self, smtp):
+        server = smtp.return_value.__enter__.return_value
+        server.send_message.return_value = {}
+        papers = [{"title": "2025一年级语文上册期末卷", "link": "https://www.xxsj.org/sjdetail/1.html"}]
+        statuses = {"xxsj.org": "扫描完成，1份", "<img src=x>": "<script>失败</script>"}
+        self.assertTrue(send_email(papers, datetime(2026, 11, 3), source_status=statuses))
+        message = server.send_message.call_args.args[0]
+        self.assertIn("今日四站试卷汇总", message["Subject"])
+        body = message.get_body(preferencelist=("html",)).get_content()
+        self.assertIn("本次汇总 1 份", body)
+        self.assertNotIn("本次新增", body)
+        self.assertIn("可能包含已推送资源", body)
+        self.assertIn("扫描完成", body)
+        self.assertNotIn("<script>", body)
+        self.assertNotIn("<img", body)
+
     def test_subjects_and_ambiguous_titles(self):
         examples = {
             "一年级语文上册期末卷": "语文",
