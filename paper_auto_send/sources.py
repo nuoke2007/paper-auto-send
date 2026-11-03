@@ -120,6 +120,10 @@ class SourceError(RuntimeError):
     pass
 
 
+class SourceAccessError(SourceError):
+    """The source denied access; stop rather than retrying other routes."""
+
+
 class PoliteFetcher:
     def __init__(self) -> None:
         self.session = requests.Session()
@@ -178,6 +182,8 @@ class PoliteFetcher:
                         current_method = "GET"
                         current_params = ()
                     continue
+                if response.status_code in (401, 403, 429):
+                    raise SourceAccessError(f"HTTP status {response.status_code}; source scan stopped")
                 if response.status_code >= 400:
                     raise SourceError(f"HTTP status {response.status_code}")
                 chunks: list[bytes] = []
@@ -451,6 +457,9 @@ def _scan_source(source: Source, today: date, fetcher: PoliteFetcher) -> tuple[l
         used_urls.add(entry_url)
         try:
             body, final_url = fetcher.get(entry_url, source)
+        except SourceAccessError as exc:
+            LOGGER.error("%s: %s", source.name, exc)
+            return papers, False
         except SourceError as exc:
             errors.append(str(exc))
             continue
@@ -482,6 +491,9 @@ def _scan_source(source: Source, today: date, fetcher: PoliteFetcher) -> tuple[l
                     source,
                     search_request.params,
                 )
+            except SourceAccessError as exc:
+                LOGGER.error("%s: %s", source.name, exc)
+                return papers, False
             except SourceError as exc:
                 errors.append(str(exc))
                 continue
@@ -518,6 +530,8 @@ def _browser_navigate(page, url: str, source: Source) -> None:
         wait_until="domcontentloaded",
         timeout=REQUEST_TIMEOUT_SECONDS * 1000,
     )
+    if response is not None and response.status in (401, 403, 429):
+        raise SourceAccessError(f"HTTP status {response.status}; source scan stopped")
     if response is not None and response.status >= 400:
         raise SourceError(f"public search returned HTTP status {response.status}")
     page.wait_for_timeout(2000)
@@ -558,7 +572,7 @@ def _collect_free_results(page, source: Source, keyword: str, today: date) -> li
         body = page.content()
         text = page.locator("body").inner_text(timeout=10_000).lower()
         if any(marker in text for marker in ("请完成安全验证", "访问过于频繁", "access denied", "request blocked")):
-            raise SourceError("site presented an access restriction; no bypass attempted")
+            raise SourceAccessError("site presented an access restriction; no bypass attempted")
         if not _verified_result_state(body):
             raise SourceError("free search has neither recognizable resource cards nor an explicit empty state")
         papers.extend(extract_papers(body, page.url, source, (keyword,), today))
@@ -621,6 +635,13 @@ def _scan_browser_source(source: Source, today: date) -> tuple[list[dict[str, st
             try:
                 context = browser.new_context()
                 context.route("**/*", restrict_network)
+                document_statuses: dict[str, int] = {}
+
+                def record_document_status(response) -> None:
+                    if response.request.resource_type == "document":
+                        document_statuses[response.url] = response.status
+
+                context.on("response", record_document_status)
                 page = context.new_page()
                 def find_one_visible(selectors: tuple[str, ...]):
                     for selector in selectors:
@@ -681,6 +702,11 @@ def _scan_browser_source(source: Source, today: date) -> tuple[list[dict[str, st
                             result_page.wait_for_timeout(1000)
                         if safe_resource_url(result_page.url, source.domains) is None:
                             raise SourceError("search navigated outside the source domain")
+                        status = document_statuses.get(result_page.url)
+                        if status in (401, 403, 429):
+                            raise SourceAccessError(f"HTTP status {status}; source scan stopped")
+                        if status is not None and status >= 400:
+                            raise SourceError(f"search result returned HTTP status {status}")
                         body_text = result_page.locator("body").inner_text(timeout=10_000)
                         challenge = result_page.locator(
                             'input[name*="captcha"], input[id*="captcha"], iframe[src*="captcha"]'
@@ -697,10 +723,15 @@ def _scan_browser_source(source: Source, today: date) -> tuple[list[dict[str, st
                                 "captcha",
                             )
                         ):
-                            raise SourceError("site presented an access restriction or challenge")
+                            raise SourceAccessError("site presented an access restriction or challenge")
 
                         if not _verified_result_state(result_page.content()):
-                            raise SourceError("public search returned no verifiable result state")
+                            LOGGER.warning(
+                                "%s: unrecognized search response; HTTP=%s, text_characters=%d, resource_cards=%d",
+                                source.name, status if status is not None else "unknown",
+                                len(body_text), result_page.locator(".search-result li.pt-item, .resource-item").count(),
+                            )
+                            raise SourceError("public search returned no verifiable result state; source scan stopped")
                         found = _collect_free_results(result_page, source, keyword, today)
                         papers.extend(found)
                         verified_queries += 1
@@ -710,8 +741,10 @@ def _scan_browser_source(source: Source, today: date) -> tuple[list[dict[str, st
                             result_page.close()
                     except SourceError as exc:
                         errors.append(str(exc))
+                        break
                     except PlaywrightError as exc:
                         errors.append(f"browser interaction failed ({exc.__class__.__name__})")
+                        break
             finally:
                 try:
                     browser.close()

@@ -17,6 +17,7 @@ from paper_auto_send.security import build_email_html, safe_resource_url
 from paper_auto_send.sources import (
     ScanResult,
     Source,
+    SourceAccessError,
     _contains_keyword,
     _has_public_listing,
     _search_requests,
@@ -232,6 +233,19 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
         papers, verified = _scan_source(source, date(2026, 11, 3), fetcher)
         self.assertEqual(papers, [])
         self.assertFalse(verified)
+
+    def test_denied_source_stops_without_trying_another_route(self) -> None:
+        source = Source(
+            "小学试卷网", ("appsj.szxuexiao.com",),
+            ("https://appsj.szxuexiao.com/", "https://appsj.szxuexiao.com/sujiaoban/index.html"),
+            ("苏教版一年级数学",),
+        )
+        fetcher = Mock()
+        fetcher.get.side_effect = SourceAccessError("HTTP status 403")
+        papers, verified = _scan_source(source, date(2026, 11, 3), fetcher)
+        self.assertEqual(papers, [])
+        self.assertFalse(verified)
+        self.assertEqual(fetcher.get.call_count, 1)
 
 
 class HistoryAndDeliveryTests(unittest.TestCase):
