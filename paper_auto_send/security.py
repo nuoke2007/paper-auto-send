@@ -81,6 +81,7 @@ def paper_category(title: str) -> str:
 
 def build_email_html(
     papers: list[dict[str, str]], *, source_status: dict[str, str] | None = None,
+    new_links: set[str] | None = None,
 ) -> str:
     groups: dict[str, dict[str, list[str]]] = {
         subject: {category: [] for category in PAPER_CATEGORIES}
@@ -88,6 +89,8 @@ def build_email_html(
     }
     for paper in papers:
         title = html.escape(paper["title"], quote=True)
+        if new_links is not None:
+            title = ("<strong style=\"color:#b45309;\">【今日新增】</strong>" if paper["link"] in new_links else "【历史保留】") + title
         safe_link = safe_resource_url(paper["link"], RESOURCE_DOMAINS)
         if safe_link is None:
             raise ValueError("email resource link is not an allowed HTTPS URL")
@@ -134,6 +137,19 @@ def build_email_html(
             f'{contents}</td></tr>'
         )
     status_panel = ""
+    updates_panel = ""
+    if new_links is not None:
+        additions = [
+            f'<li><a href="{html.escape(paper["link"], quote=True)}">{html.escape(paper["title"], quote=True)}</a></li>'
+            for paper in papers if paper["link"] in new_links
+        ]
+        updates_panel = (
+            '<tr><td style="padding:18px 24px;background:#f0fdf4;">'
+            f'<h2 style="font-size:17px;">今日新增 {len(additions)} 份</h2>'
+            + (f'<ul style="padding-left:20px;line-height:1.9;">{"".join(additions)}</ul>' if additions else
+               '<p>本次未发现尚未推送的合格资源，下方保留历史合格清单；如有来源失败，不能据此认定该站无新增。</p>')
+            + '</td></tr>'
+        )
     if source_status:
         statuses = "".join(
             f"<li>{html.escape(source, quote=True)}：{html.escape(status, quote=True)}</li>"
@@ -143,7 +159,7 @@ def build_email_html(
             '<tr><td style="padding:16px 24px;background:#fff7ed;">'
             '<h2 style="font-size:16px;margin:0;">今日来源扫描状态</h2>'
             f'<ul style="padding-left:20px;font-size:13px;line-height:1.9;">{statuses}</ul>'
-            '<p style="font-size:12px;">本封为今日重新抓取汇总，可能包含已推送资源，不修改正式发送历史；'
+            f'<p style="font-size:12px;">{"历史资源按当前规则重新核验后保留；今天未抓到不代表失效。" if new_links is not None else "本封为今日重新抓取汇总，可能包含已推送资源，不修改正式发送历史；"}'
             '抓取失败不代表该站没有资源。</p></td></tr>'
         )
     return (
@@ -152,12 +168,13 @@ def build_email_html(
         '<body style="margin:0;padding:16px 8px;background:#f1f5f9;color:#1e293b;font-family:Arial,sans-serif;">'
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:760px;margin:0 auto;background:#ffffff;">'
         '<tr><td style="padding:24px;background:#1e3a8a;color:#ffffff;">'
-        f'<h1 style="font-size:22px;margin:0 0 10px;">{"今日四站试卷汇总" if source_status else "每日新增试卷"}</h1>'
-        f'<p style="margin:0;font-size:14px;line-height:1.8;">{"本次汇总" if source_status else "本次新增"} {len(papers)} 份 · 当前年级学期 · 近3年标题年份</p>'
+        f'<h1 style="font-size:22px;margin:0 0 10px;">{"每日试卷更新与完整清单" if new_links is not None else "今日四站试卷汇总" if source_status else "每日新增试卷"}</h1>'
+        f'<p style="margin:0;font-size:14px;line-height:1.8;">{"合格资源共" if new_links is not None else "本次汇总" if source_status else "本次新增"} {len(papers)} 份 · 当前年级学期 · 近3年标题年份</p>'
         '</td></tr><tr><td style="padding:18px 24px;background:#eff6ff;">'
         f'<p style="margin:0;font-size:13px;line-height:1.8;">{summary or "暂无新增试卷"}</p>'
         '</td></tr>'
         f'{status_panel}'
+        f'{updates_panel}'
         f'{"".join(sections)}'
         '<tr><td style="padding:20px 24px;font-size:12px;line-height:1.8;color:#64748b;background:#f8fafc;">'
         '按学科、试卷类型两级分类；多学科或无法明确学科的归入“综合／未明确学科”。'

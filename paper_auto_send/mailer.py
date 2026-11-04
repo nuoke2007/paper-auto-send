@@ -21,8 +21,9 @@ class MailDeliveryError(RuntimeError):
 def send_email(
     papers: list[dict[str, str]], now: datetime | None = None, *,
     test_email: bool = False, source_status: dict[str, str] | None = None,
+    new_links: set[str] | None = None,
 ) -> bool:
-    if not papers:
+    if not papers and new_links is None:
         return False
     sender = os.environ.get("EMAIL_FROM", "").strip()
     recipient = os.environ.get("EMAIL_TO", "").strip()
@@ -42,14 +43,22 @@ def send_email(
     message["From"] = sender
     message["To"] = recipient
     message["Date"] = format_datetime(timestamp)
-    if source_status:
+    if new_links is not None:
+        message["Subject"] = f"【每日试卷更新】{timestamp:%Y-%m-%d} 共{len(papers)}份 · 今日新增{len(new_links)}份"
+    elif source_status:
         message["Subject"] = f"【今日四站试卷汇总】{timestamp:%Y-%m-%d} {len(papers)}份（含来源状态）"
     elif test_email:
         message["Subject"] = f"【试卷邮件排版测试】{timestamp:%Y-%m-%d} {len(papers)}份试卷（不修改发送历史）"
     else:
         message["Subject"] = f"【每日试卷增量推送】{timestamp:%Y-%m-%d} 新增{len(papers)}份试卷"
-    message.set_content("试卷分类及来源状态详见 HTML 邮件正文。" if test_email or source_status else "今日新增试卷详见 HTML 邮件正文。")
-    message.add_alternative(build_email_html(papers, source_status=source_status), subtype="html")
+    if new_links is not None:
+        message.set_content(
+            f"当前合格资源共{len(papers)}份，今日新增{len(new_links)}份。"
+            "新增明细、历史清单及来源状态详见 HTML 邮件正文。"
+        )
+    else:
+        message.set_content("试卷分类及来源状态详见 HTML 邮件正文。" if test_email or source_status else "今日新增试卷详见 HTML 邮件正文。")
+    message.add_alternative(build_email_html(papers, source_status=source_status, new_links=new_links), subtype="html")
 
     try:
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as server:

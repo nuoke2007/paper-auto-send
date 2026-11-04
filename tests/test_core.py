@@ -451,6 +451,12 @@ class HistoryAndDeliveryTests(unittest.TestCase):
         clock = patch("paper_auto_send.runner.datetime")
         self.addCleanup(clock.stop)
         clock.start().now.return_value = datetime(2026, 11, 3, 10, 0)
+        catalog = patch("paper_auto_send.runner.load_catalog", return_value=[])
+        self.addCleanup(catalog.stop)
+        catalog.start()
+        persist = patch("paper_auto_send.runner.save_catalog")
+        self.addCleanup(persist.stop)
+        persist.start()
 
     @patch("paper_auto_send.runner.save_sent")
     @patch("paper_auto_send.runner.send_email")
@@ -516,9 +522,9 @@ class HistoryAndDeliveryTests(unittest.TestCase):
     @patch("paper_auto_send.runner.send_email")
     @patch("paper_auto_send.runner.load_sent", return_value=set())
     @patch("paper_auto_send.runner.crawl_all", return_value=ScanResult([], [], 3))
-    def test_run_with_no_additions_does_not_send_or_save(self, crawl, load, send, save) -> None:
+    def test_daily_run_without_additions_still_sends_status_but_not_new_history(self, crawl, load, send, save) -> None:
         self.assertEqual(run(), 0)
-        send.assert_not_called()
+        send.assert_called_once_with([], source_status={}, new_links=set())
         save.assert_not_called()
 
     @patch("paper_auto_send.runner.save_sent")
@@ -534,7 +540,7 @@ class HistoryAndDeliveryTests(unittest.TestCase):
     )
     def test_history_is_saved_only_after_delivery_returns(self, crawl, load, send, save) -> None:
         events = []
-        send.side_effect = lambda papers: events.append("sent")
+        send.side_effect = lambda papers, **kwargs: events.append("sent") or True
         save.side_effect = lambda sent, path: events.append("saved")
         self.assertEqual(run(), 0)
         self.assertEqual(events, ["sent", "saved"])

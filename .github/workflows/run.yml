@@ -1,4 +1,4 @@
-name: 每日试卷增量推送
+name: 每日试卷更新与完整清单
 
 on:
   schedule:
@@ -70,7 +70,7 @@ jobs:
             done
             python main.py --source "$SOURCE_FILTER" --report run-summary.json
           fi
-      - name: Persist sent history
+      - name: Persist resource catalog and sent history
         if: ${{ always() && !cancelled() }}
         env:
           BRANCH: ${{ github.event.repository.default_branch }}
@@ -78,7 +78,7 @@ jobs:
           set -euo pipefail
           git config user.name "paper-auto-send"
           git config user.email "paper-auto-send@users.noreply.github.com"
-          git add sent_list.json
+          git add sent_list.json resource_catalog.json
           if ! git diff --cached --quiet; then
             git commit -m "Update sent resource history" -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>"
             git pull --rebase origin "$BRANCH"
@@ -92,5 +92,6 @@ jobs:
           path: |
             run-summary.json
             sent_list.json
+            resource_catalog.json
           retention-days: 30
           if-no-files-found: warn
