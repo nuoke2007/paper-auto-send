@@ -2,7 +2,7 @@ name: 每日试卷更新与完整清单
 
 on:
   schedule:
-    - cron: "0 2 * * *"
+    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
