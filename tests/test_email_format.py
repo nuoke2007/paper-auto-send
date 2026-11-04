@@ -54,7 +54,7 @@ class EmailFormatTests(unittest.TestCase):
         self.assertNotIn(">科学 <span", body)
         for paper in papers:
             self.assertEqual(body.count(f'href="{paper["link"]}"'), 1)
-        math_section = body.split(">数学 <span", 1)[1].split("</td></tr>", 1)[0]
+        math_section = body.split(">数学 <span", 1)[1].split('href="#digest-top"', 1)[0]
         self.assertIn("数学期末卷", math_section)
         self.assertIn("数学单元卷", math_section)
         self.assertNotIn("语文期末卷", math_section)
@@ -99,7 +99,7 @@ class EmailFormatTests(unittest.TestCase):
         body = build_email_html(papers)
         self.assertIn("本次新增 4 份", body)
         self.assertIn("期末考试卷 2份", body)
-        self.assertLess(body.index("<h2"), body.index("<ol"))
+        self.assertLess(body.index("<h2"), body.index('class="paper-cell"'))
         positions = [body.index(f">{category} <span") for category in PAPER_CATEGORIES[:3]]
         self.assertEqual(positions, sorted(positions))
         for paper in papers:
@@ -130,3 +130,24 @@ class EmailFormatTests(unittest.TestCase):
         body = build_email_html([])
         self.assertIn("暂无新增试卷", body)
         self.assertNotIn("<li", body)
+
+    def test_compact_grid_keeps_full_titles_and_mobile_fallback(self):
+        papers = [
+            {"title": f"苏教版2025一年级数学上册期末完整标题{i}",
+             "link": f"https://www.xxsj.org/sjdetail/{i}.html"}
+            for i in range(5)
+        ]
+        body = build_email_html(papers, new_links={papers[-1]["link"]})
+        self.assertEqual(body.count('class="paper-cell"'), 5)
+        self.assertEqual(body.count('class="empty-cell"'), 1)
+        self.assertIn("@media only screen and (max-width:600px)", body)
+        self.assertIn('href="#subject-1"', body)
+        self.assertIn('id="subject-1"', body)
+        self.assertIn('href="#digest-top"', body)
+        self.assertLess(body.index(papers[-1]["title"]), body.index(papers[0]["title"]))
+        for item in papers:
+            self.assertEqual(body.count(item["title"]), 1)
+            self.assertEqual(body.count(f'href="{item["link"]}"'), 1)
+        self.assertNotIn("<script", body)
+        self.assertNotIn("<details", body)
+        self.assertNotIn("查看原站详情与下载入口", body)

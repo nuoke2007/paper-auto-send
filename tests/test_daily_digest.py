@@ -129,7 +129,7 @@ class DailyDigestTests(unittest.TestCase):
         self.assertIn("今日新增 1 份", body)
         self.assertIn("【今日新增】", body)
         self.assertIn("【历史保留】", body)
-        self.assertEqual(body.count(f'href="{new["link"]}"'), 2)
+        self.assertEqual(body.count(f'href="{new["link"]}"'), 1)
         self.assertEqual(body.count(f'href="{old["link"]}"'), 1)
         self.assertIn("今日新增 0 份", build_email_html([old], new_links=set()))
 
