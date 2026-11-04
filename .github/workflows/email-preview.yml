@@ -41,6 +41,7 @@ jobs:
         env:
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_TO_ADDITIONAL: ${{ secrets.EMAIL_TO_ADDITIONAL }}
           EMAIL_SMTP_PWD: ${{ secrets.EMAIL_SMTP_PWD }}
           SCAN_SCOPE: ${{ inputs.scope }}
         shell: python

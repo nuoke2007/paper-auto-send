@@ -41,6 +41,7 @@ GitHub Actions 自动安装 Python 和 Chromium → 执行回归测试 → 抓�
 |---|---|
 | `EMAIL_FROM` | 发件用的 126 邮箱地址 |
 | `EMAIL_TO` | 收件邮箱 |
+| `EMAIL_TO_ADDITIONAL` | 可选的新增收件邮箱，多个地址用英文逗号分隔；保留原 `EMAIL_TO`，不支持显示名 |
 | `EMAIL_SMTP_PWD` | 发件邮箱的 SMTP 授权码，不是邮箱登录密码 |
 
 在仓库 `Settings → Secrets and variables → Actions` 配置。也可在已登录 GitHub CLI 的本机终端安全输入（不要把授权码写在命令参数或聊天中）：
@@ -52,6 +53,8 @@ gh secret set EMAIL_SMTP_PWD --repo OWNER/paper-auto-send
 配置齐全后，将仓库 Actions **Variable** `DELIVERY_ENABLED` 设置为 `true`。未启用时定时任务只做无发信扫描，不会尝试缺凭据的 SMTP 请求。配置邮件凭据后，首次以非 dry-run 手动执行验证真实送达；以后无需电脑开机或每天操作。
 
 SMTP 使用 `smtp.126.com:465`，保持 TLS 验证。授权码只能由邮箱所有者在邮箱服务中取得；本项目不会自动改变邮箱密码或安全设置。
+
+每日任务和手动排版预览均向全部已配置收件人发送，地址重复时只发送一次，收件人可在 To 中互相看到地址。任一地址被 SMTP 拒收时明确报错且不更新通知历史；其他地址可能已收到，重试存在重复投递风险。
 
 保存或更换授权码后，可以在 Actions 手动运行 **Verify SMTP connection**（`smtp-check.yml`）。它只验证 TLS 连接和 SMTP 登录，不发送邮件、不扫描站点、不修改发送历史；成功不代表收件箱已收到邮件，真实投递需运行每日任务。
 

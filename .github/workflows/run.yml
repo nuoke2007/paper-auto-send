@@ -51,6 +51,7 @@ jobs:
         env:
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_TO_ADDITIONAL: ${{ secrets.EMAIL_TO_ADDITIONAL }}
           EMAIL_SMTP_PWD: ${{ secrets.EMAIL_SMTP_PWD }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
           DELIVERY_ENABLED: ${{ vars.DELIVERY_ENABLED || 'false' }}

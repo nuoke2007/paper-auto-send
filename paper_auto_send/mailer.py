@@ -27,6 +27,7 @@ def send_email(
         return False
     sender = os.environ.get("EMAIL_FROM", "").strip()
     recipient = os.environ.get("EMAIL_TO", "").strip()
+    additional = os.environ.get("EMAIL_TO_ADDITIONAL", "").strip()
     password = os.environ.get("EMAIL_SMTP_PWD", "")
     parsed_sender = parseaddr(sender)[1]
     if not sender or parsed_sender != sender or "\r" in sender or "\n" in sender:
@@ -35,13 +36,20 @@ def send_email(
         raise MailDeliveryError("EMAIL_TO is missing or invalid")
     if "@" not in sender or "@" not in recipient:
         raise MailDeliveryError("Email addresses must contain an address and domain")
+    recipients = [recipient]
+    for address in additional.split(",") if additional else []:
+        address = address.strip()
+        if not address or parseaddr(address)[1] != address or "@" not in address or "\r" in address or "\n" in address:
+            raise MailDeliveryError("EMAIL_TO_ADDITIONAL contains an invalid address")
+        if address.casefold() not in {item.casefold() for item in recipients}:
+            recipients.append(address)
     if not password:
         raise MailDeliveryError("EMAIL_SMTP_PWD is missing")
 
     timestamp = now or datetime.now(SHANGHAI)
     message = EmailMessage()
     message["From"] = sender
-    message["To"] = recipient
+    message["To"] = ", ".join(recipients)
     message["Date"] = format_datetime(timestamp)
     if new_links is not None:
         message["Subject"] = f"【每日试卷更新】{timestamp:%Y-%m-%d} 共{len(papers)}份 · 今日新增{len(new_links)}份"
@@ -63,9 +71,9 @@ def send_email(
     try:
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as server:
             server.login(sender, password)
-            refused = server.send_message(message, from_addr=sender, to_addrs=[recipient])
+            refused = server.send_message(message, from_addr=sender, to_addrs=recipients)
             if refused:
-                raise MailDeliveryError("SMTP server refused the configured recipient")
+                raise MailDeliveryError("SMTP server refused one or more configured recipients; partial delivery is possible")
     except (OSError, smtplib.SMTPException) as exc:
         raise MailDeliveryError(f"SMTP delivery failed ({exc.__class__.__name__})") from exc
     return True
