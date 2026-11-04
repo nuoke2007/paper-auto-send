@@ -98,6 +98,8 @@ def build_email_html(
             timing = f"发布日期：{html.escape(paper.get('published', '未提供'), quote=True)}"
         if paper.get("region_basis"):
             timing += f"；地区依据：{html.escape(paper['region_basis'], quote=True)}"
+        if paper.get("eligibility_basis"):
+            timing += f"<br>入选依据：{html.escape(paper['eligibility_basis'], quote=True)}"
         source = html.escape(paper.get("source") or urlsplit(safe_link).hostname or "", quote=True)
         groups[paper_subject(paper["title"])][paper_category(paper["title"])].append(
             '<li style="margin:0 0 16px;padding:0 0 12px;border-bottom:1px solid #e5e7eb;">'

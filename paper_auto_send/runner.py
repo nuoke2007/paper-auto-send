@@ -4,6 +4,7 @@ import logging
 import argparse
 import json
 import sys
+from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -14,6 +15,7 @@ from .history import DEFAULT_HISTORY_PATH, load_sent, save_sent
 from .mailer import MailDeliveryError, send_email
 from .security import RESOURCE_DOMAINS, safe_resource_url
 from .sources import ScanResult, crawl_all
+from .eligibility import eligibility_basis
 
 LOGGER = logging.getLogger(__name__)
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -37,8 +39,13 @@ def newly_found(result: ScanResult, sent: set[str], today: date | None = None) -
         )
         if not title_based or not matches_current_term(paper.get("title", ""), check_date):
             continue
+        basis = eligibility_basis(paper.get("title", ""))
+        if basis is None:
+            LOGGER.warning("Discarded a resource without title evidence for Jiangsu or the required textbook version")
+            continue
         item = dict(paper)
         item["link"] = safe_link
+        item["eligibility_basis"] = basis
         fresh.append(item)
         seen.add(safe_link)
     return fresh
@@ -49,6 +56,13 @@ def run(dry_run: bool = False, report_path: Path | None = None, source_filter: s
     sent = load_sent(DEFAULT_HISTORY_PATH)
     result = crawl_all(today) if source_filter == "all" else crawl_all(today, source_filter)
     fresh = newly_found(result, sent, today)
+    new_source_counts = dict(Counter(paper.get("source", "未标明来源") for paper in fresh))
+    for source, count in result.source_counts.items():
+        LOGGER.info(
+            "%s: eligible=%d, unsent=%d, scan=%s",
+            source, count, new_source_counts.get(source, 0),
+            "incomplete" if source in result.failures else "complete",
+        )
     if result.failures:
         LOGGER.error(
             "Partial crawl failure: %d of %d source(s) could not be verified: %s",
@@ -71,6 +85,7 @@ def run(dry_run: bool = False, report_path: Path | None = None, source_filter: s
         "eligible_resources": len(result.papers),
         "new_resources": len(fresh),
         "source_counts": result.source_counts,
+        "new_source_counts": new_source_counts,
         "delivered": False,
         "history_saved": False,
     }

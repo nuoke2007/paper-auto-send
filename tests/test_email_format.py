@@ -115,12 +115,14 @@ class EmailFormatTests(unittest.TestCase):
             "region_basis": "<svg onload=x>",
             "date_basis": "title_year",
             "title_year": '<img src="x">',
+            "eligibility_basis": "<script>教材版本</script>",
         }
         body = build_email_html([paper])
         self.assertNotIn("<script>", body)
         self.assertNotIn("<img", body)
         self.assertNotIn("<svg", body)
         self.assertIn("a=1&amp;b=2", body)
+        self.assertIn("入选依据", body)
         with self.assertRaises(ValueError):
             build_email_html([dict(paper, link="javascript:alert(1)")])
 

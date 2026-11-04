@@ -60,16 +60,16 @@ class AcademicCalendarTests(unittest.TestCase):
             {"title": title, "link": f"https://appsj.szxuexiao.com/html/{index}.html",
              "date_basis": "title_year", "title_year": "2025"}
             for index, title in enumerate((
-                "2025一年级上册试卷", "2025一年级下册试卷",
-                "2025二年级上册试卷", "2025一年级试卷"))
+                "江苏2025一年级上册试卷", "江苏2025一年级下册试卷",
+                "江苏2025二年级上册试卷", "江苏2025一年级试卷"))
         ]
         result = ScanResult(papers, [], 3)
         self.assertEqual([p["title"] for p in newly_found(result, set(), date(2026, 11, 3))],
-                         ["2025一年级上册试卷"])
+                         ["江苏2025一年级上册试卷"])
         self.assertEqual([p["title"] for p in newly_found(result, set(), date(2027, 3, 1))],
-                         ["2025一年级下册试卷"])
+                         ["江苏2025一年级下册试卷"])
         self.assertEqual([p["title"] for p in newly_found(result, set(), date(2027, 9, 1))],
-                         ["2025二年级上册试卷"])
+                         ["江苏2025二年级上册试卷"])
 
     def test_grade_advances_at_september_and_stays_during_summer(self) -> None:
         self.assertEqual(grade_for_date(date(2026, 8, 31)), 1)
@@ -155,8 +155,8 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
         ):
             self.assertEqual(extract(title), [], title)
         other = source_definitions(keywords_for_date(day))[0]
-        self.assertEqual(extract_papers('<a href="/html/1.html">2025阜宁县一年级上册数学试卷</a>',
-            other.entry_urls[0], other, other.keywords, day), [])
+        self.assertEqual(len(extract_papers('<a href="/html/1.html">2025阜宁县一年级上册数学试卷</a>',
+            other.entry_urls[0], other, other.keywords, day)), 1)
         self.assertIn("地区依据", build_email_html(extract("2025阜宁县一年级上册数学试卷")))
 
     def test_jiangsu_places_do_not_accept_ambiguous_districts_or_street_names(self) -> None:
@@ -325,7 +325,7 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
         page = page.replace("2025-11-02", "")
         self.assertEqual(extract_papers(page, "https://appsj.szxuexiao.com/", source, source.keywords, date(2026, 1, 1)), [])
 
-    def test_free_cards_use_resource_metadata_not_search_query(self) -> None:
+    def test_free_cards_require_visible_version_not_hidden_metadata_or_query(self) -> None:
         source = Source("二一教育网", ("21cnjy.com",), (), ("苏教版一年级数学",), True)
         metadata = {
             "title": "一年级数学期末测试卷",
@@ -334,18 +334,21 @@ class UrlAndHtmlSafetyTests(unittest.TestCase):
             "types": {"7": "试卷"},
             "coin": "0",
         }
-        def page_for(data: dict, label: str = "免费") -> str:
+        def page_for(data: dict, label: str = "免费", title: str = "苏教版2025一年级数学上册期末测试卷") -> str:
             encoded = html.escape(json.dumps(data), quote=True)
             return (
                 f'<li class="pt-item"><div hmtproperty="{encoded}">'
                 '<a href="https://www.21cnjy.com/H/3/45/123.shtml?kw=x&qid=changing&rank=1">'
-                '2025一年级数学上册期末测试卷</a></div><span class="time">2025-11-03</span>'
+                f'{title}</a></div><span class="time">2025-11-03</span>'
                 f'<span class="price">{label}</span></li>'
             )
         papers = extract_papers(page_for(metadata), "https://www.21cnjy.com/", source, source.keywords, date(2026, 1, 1))
         self.assertEqual(len(papers), 1)
         self.assertEqual(papers[0]["link"], "https://www.21cnjy.com/H/3/45/123.shtml")
-        for change in ({"version_name": "人教版"}, {"types": {"3": "教案"}}, {"coin": "10"}):
+        self.assertEqual(extract_papers(
+            page_for(metadata, title="2025一年级数学上册期末测试卷"), "https://www.21cnjy.com/",
+            source, source.keywords, date(2026, 1, 1)), [])
+        for change in ({"types": {"3": "教案"}}, {"coin": "10"}):
             self.assertEqual(
                 extract_papers(page_for({**metadata, **change}), "https://www.21cnjy.com/", source, source.keywords, date(2026, 1, 1)),
                 [],
@@ -524,7 +527,7 @@ class HistoryAndDeliveryTests(unittest.TestCase):
     @patch(
         "paper_auto_send.runner.crawl_all",
         return_value=ScanResult(
-            [{"title": "2025一年级上册练习卷", "link": "https://appsj.szxuexiao.com/paper/1", "date_basis": "title_year", "title_year": "2025"}],
+            [{"title": "江苏2025一年级上册练习卷", "link": "https://appsj.szxuexiao.com/paper/1", "date_basis": "title_year", "title_year": "2025"}],
             [],
             3,
         ),
@@ -542,7 +545,7 @@ class HistoryAndDeliveryTests(unittest.TestCase):
     @patch(
         "paper_auto_send.runner.crawl_all",
         return_value=ScanResult(
-            [{"title": "2025一年级上册练习卷", "link": "https://appsj.szxuexiao.com/paper/1", "date_basis": "title_year", "title_year": "2025"}],
+            [{"title": "江苏2025一年级上册练习卷", "link": "https://appsj.szxuexiao.com/paper/1", "date_basis": "title_year", "title_year": "2025"}],
             [],
             3,
         ),
@@ -558,7 +561,7 @@ class HistoryAndDeliveryTests(unittest.TestCase):
     @patch("paper_auto_send.runner.crawl_all")
     def test_dry_run_reports_but_never_delivers_or_changes_history(self, crawl, load, send, save) -> None:
         crawl.return_value = ScanResult(
-            [{"title": "2025一年级上册练习卷", "link": "https://appsj.szxuexiao.com/html/1.html", "date_basis": "title_year", "title_year": "2025"}],
+            [{"title": "江苏2025一年级上册练习卷", "link": "https://appsj.szxuexiao.com/html/1.html", "date_basis": "title_year", "title_year": "2025"}],
             [], 3,
         )
         with tempfile.TemporaryDirectory() as directory:

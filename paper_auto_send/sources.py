@@ -21,6 +21,7 @@ from .dates import is_recent_title_year, title_year
 from .academic import matches_current_term, semester_for_date
 from .regions import is_jiangsu_title
 from .security import safe_resource_url
+from .eligibility import eligibility_basis
 
 LOGGER = logging.getLogger(__name__)
 MIN_REQUEST_INTERVAL_SECONDS = 2.0
@@ -370,14 +371,10 @@ def extract_papers(
             continue
         container = _candidate_container(anchor)
         metadata = _resource_metadata(container) if source.only_free else {}
-        resource_text = title
-        if metadata:
-            resource_text += " " + str(metadata.get("version_name", ""))
-            resource_text += " " + str(metadata.get("subject_name", ""))
-        if any(term in resource_text for term in source.exclude_terms):
+        if any(term in title for term in source.exclude_terms):
             continue
-        jiangsu_match = source.jiangsu_alternative and is_jiangsu_title(title)
-        if not any(_contains_keyword(resource_text, keyword) for keyword in keywords) and not jiangsu_match:
+        basis = eligibility_basis(title)
+        if basis is None:
             continue
         if not matches_current_term(title, today):
             continue
@@ -405,8 +402,9 @@ def extract_papers(
             "source": source.name,
             "date_basis": "title_year",
             "title_year": str(title_year(title)),
+            "eligibility_basis": basis,
         }
-        if jiangsu_match:
+        if is_jiangsu_title(title):
             item["region_basis"] = "江苏地区标题"
         results.append(item)
     return results
